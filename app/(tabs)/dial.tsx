@@ -13,51 +13,57 @@ import { ArrowLeft, Coffee } from 'lucide-react-native'
 import { useStore } from '@/lib/store'
 import { theme } from '@/constants/theme'
 import { MethodTabs } from '@/components/MethodTabs'
-import { BrewParamSlider } from '@/components/BrewParamSlider'
+import { BrewSlider } from '@/components/BrewSlider'
 import { RadialTasteDial } from '@/components/RadialTasteDial'
-import { AISuggestionBox } from '@/components/AISuggestionBox'
-import { DialTipBox } from '@/components/DialTipBox'
-import { getDialTip, getZone } from '@/lib/dialingAlgorithm'
+import { LiveTipBox, SavedSuggestionBox } from '@/components/SuggestionBox'
+import {
+  getDialTip, getZone, getCoachingMessage, isOscillating,
+  optimizeNextDial,
+} from '@/lib/algorithms'
 
 export default function DialScreen() {
   const router = useRouter()
   const {
-    selectedBean,
-    selectedMethod,
-    currentParams,
-    lastSuggestion,
-    recentBrews,
-    setMethod,
-    updateParam,
-    setTastePosition,
+    selectedBean, selectedMethod,
+    currentParams, lastSuggestion,
+    recentBrews, userProfile,
+    setMethod, updateParam, setTastePosition,
     saveBrew,
   } = useStore()
 
-  const [saving, setSaving]       = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [showLocal, setShowLocal] = useState(false)
+  const [saving, setSaving]         = useState(false)
+  const [saveError, setSaveError]   = useState<string | null>(null)
+  const [showSaved, setShowSaved]   = useState(false)
 
   const isEspresso = selectedMethod === 'espresso'
 
-  const dialTip = getDialTip(currentParams.taste_position, selectedMethod)
-  const dialZone = getZone(currentParams.taste_position)
+  // Live coaching
+  const dialTip       = getDialTip(currentParams.taste_position, selectedMethod)
+  const dialZone      = getZone(currentParams.taste_position)
+  const coachMsg      = getCoachingMessage(currentParams.taste_position, userProfile)
+  const beanBrews     = selectedBean
+    ? recentBrews.filter((b) => b.bean_id === selectedBean.id)
+    : []
+  const trajectory    = beanBrews.map((b) => b.taste_position ?? 50).reverse()
+  const oscillating   = isOscillating(trajectory)
+
+  // Espresso ratio badge
+  const ratio = isEspresso && currentParams.dose_g > 0
+    ? `1:${(currentParams.yield_g / currentParams.dose_g).toFixed(1)}`
+    : undefined
 
   async function handleSave() {
     setSaving(true)
     setSaveError(null)
-    setShowLocal(true)
+    setShowSaved(true)
     try {
       await saveBrew()
     } catch (e: any) {
-      setSaveError(e?.message ?? 'Save failed')
+      setSaveError(e?.message ?? 'Save failed — please try again')
     } finally {
       setSaving(false)
     }
   }
-
-  const ratio = isEspresso && currentParams.dose_g > 0
-    ? `1:${(currentParams.yield_g / currentParams.dose_g).toFixed(1)}`
-    : undefined
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -66,13 +72,22 @@ export default function DialScreen() {
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <ArrowLeft size={20} stroke={theme.colors.textPrimary} />
         </Pressable>
-        <View style={styles.beanDot}>
+        <View style={[styles.beanIcon, { backgroundColor: theme.colors.accentMuted }]}>
           <Coffee size={18} stroke={theme.colors.accent} />
         </View>
-        <View>
-          <Text style={styles.beanName}>{selectedBean?.name ?? 'No bean'}</Text>
-          <Text style={styles.beanOrigin}>{selectedBean?.origin ?? 'Select a bean'}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.beanName} numberOfLines={1}>
+            {selectedBean?.name ?? 'No bean selected'}
+          </Text>
+          <Text style={styles.beanOrigin}>
+            {selectedBean?.origin ?? 'Select a bean from Home'}
+          </Text>
         </View>
+        {selectedBean?.roast_level && (
+          <View style={styles.roastChip}>
+            <Text style={styles.roastChipText}>{selectedBean.roast_level}</Text>
+          </View>
+        )}
       </View>
 
       <ScrollView
@@ -85,41 +100,46 @@ export default function DialScreen() {
 
         {/* Brew params */}
         <View style={styles.paramsSection}>
-          <BrewParamSlider
+          <BrewSlider
             label="Dose"
             value={currentParams.dose_g}
             min={12} max={22} step={0.5} unit="g"
+            description="Ground coffee"
             onChangeEnd={(v) => updateParam('dose_g', v)}
           />
 
           {isEspresso ? (
             <>
-              <BrewParamSlider
+              <BrewSlider
                 label="Yield"
                 value={currentParams.yield_g}
-                min={20} max={54} step={1} unit="g"
+                min={20} max={60} step={1} unit="g"
                 badge={ratio}
+                description="Liquid espresso output"
                 onChangeEnd={(v) => updateParam('yield_g', v)}
               />
-              <BrewParamSlider
+              <BrewSlider
                 label="Time"
                 value={currentParams.time_s}
-                min={18} max={45} step={1} unit="s"
+                min={18} max={50} step={1} unit="s"
+                description="Shot pull time"
                 onChangeEnd={(v) => updateParam('time_s', v)}
               />
             </>
           ) : (
             <>
-              <BrewParamSlider
+              <BrewSlider
                 label="Water"
                 value={currentParams.water_g ?? 250}
-                min={150} max={350} step={10} unit="g"
+                min={150} max={400} step={10} unit="g"
+                description="Total water volume"
                 onChangeEnd={(v) => updateParam('water_g', v)}
               />
-              <BrewParamSlider
+              <BrewSlider
                 label="Brew time"
                 value={currentParams.brew_time_s ?? 180}
                 min={60} max={480} step={15} unit="s"
+                description="Total extraction time"
                 onChangeEnd={(v) => updateParam('brew_time_s', v)}
               />
             </>
@@ -128,46 +148,62 @@ export default function DialScreen() {
 
         {/* Taste dial */}
         <View style={styles.dialSection}>
-          <Text style={styles.sectionLabel}>TASTE DIAL</Text>
+          <Text style={styles.dialSectionLabel}>TASTE DIAL</Text>
+          <Text style={styles.dialSectionHint}>
+            Drag to where this brew tastes
+          </Text>
           <RadialTasteDial
             value={currentParams.taste_position}
             onChange={setTastePosition}
           />
         </View>
 
-        {/* Live dial tip — always visible */}
-        <View style={styles.suggestionWrapper}>
-          <DialTipBox tip={dialTip} zone={dialZone} />
+        {/* Oscillation warning */}
+        {oscillating && (
+          <View style={styles.warningBanner}>
+            <Text style={styles.warningText}>
+              ⚡ You've been oscillating — try a smaller adjustment this time
+            </Text>
+          </View>
+        )}
+
+        {/* Live coaching message */}
+        <View style={styles.coachRow}>
+          <Text style={styles.coachMsg}>{coachMsg}</Text>
         </View>
 
-        {/* AI suggestion — shown after save */}
-        {showLocal && lastSuggestion && (
-          <View style={styles.suggestionWrapper}>
-            <AISuggestionBox
+        {/* Live tip (always shown) */}
+        <View style={styles.tipSection}>
+          <LiveTipBox tip={dialTip} zone={dialZone} />
+        </View>
+
+        {/* Saved suggestion (shown after save) */}
+        {showSaved && (
+          <View style={styles.tipSection}>
+            <SavedSuggestionBox
               suggestion={saving ? null : lastSuggestion}
               loading={saving}
             />
           </View>
         )}
-        {saving && (
-          <View style={styles.suggestionWrapper}>
-            <AISuggestionBox suggestion={null} loading />
-          </View>
-        )}
 
-        <View style={{ height: 20 }} />
+        <View style={{ height: 16 }} />
       </ScrollView>
 
-      {/* Save button */}
+      {/* Footer */}
       <View style={styles.footer}>
         {saveError ? (
           <Text style={styles.saveError}>{saveError}</Text>
         ) : null}
         {!selectedBean ? (
-          <Text style={styles.saveHint}>Select a bean first to save a brew</Text>
+          <Text style={styles.saveHint}>Select a bean on Home to save a brew</Text>
         ) : null}
         <Pressable
-          style={[styles.saveBtn, saving && styles.saveBtnLoading, !selectedBean && styles.saveBtnDisabled]}
+          style={[
+            styles.saveBtn,
+            saving           && styles.saveBtnLoading,
+            !selectedBean    && styles.saveBtnDisabled,
+          ]}
           onPress={handleSave}
           disabled={saving || !selectedBean}
         >
@@ -182,59 +218,97 @@ export default function DialScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: theme.colors.bgPrimary },
+  safe:  { flex: 1, backgroundColor: theme.colors.bgPrimary },
+
   header: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: theme.colors.bgSecondary,
+    flexDirection:     'row',
+    alignItems:        'center',
+    backgroundColor:   theme.colors.card,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.divider,
-    paddingHorizontal: theme.spacing.standard,
+    paddingHorizontal: 16,
     paddingVertical:   12,
-    gap:             12,
+    gap:               10,
+    ...theme.shadow.xs,
   },
   backBtn:    { padding: 4 },
-  beanDot: {
-    width:           42,
-    height:          42,
-    borderRadius:    21,
-    backgroundColor: theme.colors.bgPrimary,
-    alignItems:      'center',
-    justifyContent:  'center',
+  beanIcon: {
+    width: 40, height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  beanName:   { fontSize: 15, fontWeight: '600', color: theme.colors.textPrimary },
-  beanOrigin: { fontSize: 12, color: theme.colors.textSecondary },
-  scroll:     { flex: 1 },
-  content:    { paddingBottom: 20 },
-  paramsSection: { padding: theme.spacing.compact, paddingHorizontal: theme.spacing.standard, gap: 8, marginTop: 4 },
+  beanName:   { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary },
+  beanOrigin: { fontSize: 11, color: theme.colors.textSecondary },
+  roastChip:  {
+    backgroundColor: theme.colors.accentMuted,
+    borderRadius:    theme.radius.full,
+    paddingHorizontal: 8,
+    paddingVertical:   3,
+  },
+  roastChipText: { fontSize: 10, color: theme.colors.accentDark, fontWeight: '600' },
+
+  scroll:  { flex: 1 },
+  content: { paddingBottom: 20 },
+
+  paramsSection: {
+    paddingHorizontal: 16,
+    paddingTop:        12,
+    gap:               8,
+  },
+
   dialSection: {
-    alignItems:   'center',
-    paddingTop:   theme.spacing.base,
-    paddingBottom: 8,
+    alignItems:    'center',
+    paddingTop:    20,
+    paddingBottom: 4,
+    paddingHorizontal: 16,
   },
-  sectionLabel: {
-    fontSize:     10,
-    color:        theme.colors.textSecondary,
+  dialSectionLabel: {
+    fontSize:      10,
+    fontWeight:    '700',
+    color:         theme.colors.textSecondary,
     letterSpacing: 1.5,
-    marginBottom: 12,
-    fontWeight:   '600',
+    marginBottom:  2,
   },
-  suggestionWrapper: { paddingHorizontal: theme.spacing.standard },
+  dialSectionHint: {
+    fontSize:     12,
+    color:        theme.colors.textSecondary,
+    marginBottom: 12,
+  },
+
+  warningBanner: {
+    marginHorizontal: 16,
+    backgroundColor:  theme.colors.sourLight,
+    borderRadius:     theme.radius.md,
+    padding:          10,
+    marginTop:        4,
+  },
+  warningText: { fontSize: 12, color: theme.colors.accentDark, fontWeight: '500' },
+
+  coachRow: { paddingHorizontal: 16, marginTop: 6 },
+  coachMsg: { fontSize: 13, color: theme.colors.textSecondary, fontStyle: 'italic', textAlign: 'center' },
+
+  tipSection: { paddingHorizontal: 16, marginTop: 10 },
+
   footer: {
-    paddingHorizontal: theme.spacing.standard,
-    paddingBottom:     16,
+    paddingHorizontal: 16,
+    paddingBottom:     20,
+    paddingTop:        8,
     backgroundColor:   theme.colors.bgPrimary,
+    borderTopWidth:    1,
+    borderTopColor:    theme.colors.divider,
   },
   saveBtn: {
-    height:          52,
-    borderRadius:    18,
+    height:          54,
+    borderRadius:    theme.radius.xl,
     backgroundColor: theme.colors.accent,
     alignItems:      'center',
     justifyContent:  'center',
+    ...theme.shadow.md,
   },
   saveBtnLoading:  { backgroundColor: theme.colors.accentDark },
-  saveBtnDisabled: { backgroundColor: theme.colors.divider },
+  saveBtnDisabled: { backgroundColor: theme.colors.divider, shadowOpacity: 0 },
   saveBtnText:     { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
-  saveError:       { fontSize: 12, color: theme.colors.sour, marginBottom: 6, textAlign: 'center' },
+  saveError:       { fontSize: 12, color: theme.colors.error, marginBottom: 6, textAlign: 'center' },
   saveHint:        { fontSize: 12, color: theme.colors.textSecondary, marginBottom: 6, textAlign: 'center' },
 })

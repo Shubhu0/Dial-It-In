@@ -1,22 +1,38 @@
 import { create } from 'zustand'
 import { supabase } from './supabase'
-import { Bean, Brew, BrewParams, Method, Suggestion } from './types'
+import { Bean, Brew, BrewParams, Method, Suggestion, UserProfile } from './types'
+import {
+  buildUserProfile,
+  getBestBrew,
+  getSmartDefaults,
+  optimizeNextDial,
+} from './algorithms'
 
 interface BrewState {
-  selectedBean: Bean | null
+  // Selection
+  selectedBean:   Bean | null
   selectedMethod: Method
-  currentParams: BrewParams
-  lastSuggestion: Suggestion | null
-  recentBrews: Brew[]
-  beans: Bean[]
 
-  setBean: (bean: Bean) => void
-  setMethod: (method: Method) => void
-  updateParam: (key: keyof BrewParams, value: number | string) => void
+  // Current session
+  currentParams:  BrewParams
+  lastSuggestion: Suggestion | null
+
+  // Data
+  recentBrews: Brew[]
+  beans:       Bean[]
+
+  // Adaptive learning
+  userProfile: UserProfile
+
+  // Actions
+  setBean:          (bean: Bean) => void
+  setMethod:        (method: Method) => void
+  updateParam:      (key: keyof BrewParams, value: number | string) => void
   setTastePosition: (pos: number) => void
-  saveBrew: () => Promise<void>
+  applyBestBrew:    (beanId: string) => void
+  saveBrew:         () => Promise<void>
   fetchRecentBrews: () => Promise<void>
-  fetchBeans: () => Promise<void>
+  fetchBeans:       () => Promise<void>
 }
 
 const DEFAULT_PARAMS: BrewParams = {
@@ -25,6 +41,15 @@ const DEFAULT_PARAMS: BrewParams = {
   time_s:         28,
   grind_setting:  '14',
   taste_position: 50,
+  water_temp_c:   93,
+}
+
+const DEFAULT_PROFILE: UserProfile = {
+  tastePreference: 50,
+  totalBrews:      0,
+  averageTaste:    50,
+  trend:           'stable',
+  trajectory:      [],
 }
 
 export const useStore = create<BrewState>((set, get) => ({
@@ -34,9 +59,40 @@ export const useStore = create<BrewState>((set, get) => ({
   lastSuggestion: null,
   recentBrews:    [],
   beans:          [],
+  userProfile:    DEFAULT_PROFILE,
 
-  setBean:   (bean)   => set({ selectedBean: bean }),
-  setMethod: (method) => set({ selectedMethod: method }),
+  setBean: (bean) => {
+    set({ selectedBean: bean })
+    // Apply smart defaults for this bean's roast level
+    const method   = get().selectedMethod
+    const defaults = getSmartDefaults(bean.roast_level, method)
+    set((s) => ({
+      currentParams: {
+        ...s.currentParams,
+        grind_setting: bean.grind_setting ?? defaults.grind_setting,
+        water_temp_c:  defaults.water_temp_c,
+      },
+    }))
+  },
+
+  setMethod: (method) => {
+    set({ selectedMethod: method })
+    // Re-derive defaults when method changes
+    const bean     = get().selectedBean
+    const defaults = getSmartDefaults(bean?.roast_level, method)
+    set((s) => ({
+      currentParams: {
+        ...s.currentParams,
+        dose_g:       defaults.dose_g,
+        yield_g:      defaults.yield_g ?? s.currentParams.yield_g,
+        time_s:       defaults.time_s  ?? s.currentParams.time_s,
+        water_g:      defaults.water_g,
+        brew_time_s:  defaults.brew_time_s,
+        grind_setting: defaults.grind_setting,
+        water_temp_c:  defaults.water_temp_c,
+      },
+    }))
+  },
 
   updateParam: (key, value) =>
     set((s) => ({ currentParams: { ...s.currentParams, [key]: value } })),
@@ -44,13 +100,34 @@ export const useStore = create<BrewState>((set, get) => ({
   setTastePosition: (pos) =>
     set((s) => ({ currentParams: { ...s.currentParams, taste_position: pos } })),
 
+  // Pre-load best parameters for a given bean
+  applyBestBrew: (beanId) => {
+    const best = getBestBrew(
+      get().recentBrews.filter((b) => b.bean_id === beanId)
+    )
+    if (!best) return
+    set((s) => ({
+      selectedMethod: best.method,
+      currentParams: {
+        ...s.currentParams,
+        dose_g:        best.dose_g        ?? s.currentParams.dose_g,
+        yield_g:       best.yield_g       ?? s.currentParams.yield_g,
+        time_s:        best.time_s        ?? s.currentParams.time_s,
+        water_g:       best.water_g       ?? s.currentParams.water_g,
+        brew_time_s:   best.brew_time_s   ?? s.currentParams.brew_time_s,
+        grind_setting: best.grind_setting ?? s.currentParams.grind_setting,
+        taste_position: 50,
+      },
+    }))
+  },
+
   saveBrew: async () => {
     const { selectedBean, selectedMethod, currentParams } = get()
     if (!selectedBean) return
 
     const { data: { user } } = await supabase.auth.getUser()
 
-    // 1. Fetch last 5 brews for context
+    // Fetch last 5 brews for context
     const { data: history } = await supabase
       .from('brews')
       .select('*')
@@ -58,7 +135,10 @@ export const useStore = create<BrewState>((set, get) => ({
       .order('created_at', { ascending: false })
       .limit(5)
 
-    // 2. Call Edge Function (best-effort, 8 s timeout — save even if AI unavailable)
+    // Compute local optimisation hint
+    const opt = optimizeNextDial(currentParams.taste_position, selectedMethod)
+
+    // Call Edge Function best-effort (8 s timeout)
     let suggestion: Suggestion | null = null
     try {
       const invokePromise = supabase.functions.invoke('get-suggestion', {
@@ -70,16 +150,24 @@ export const useStore = create<BrewState>((set, get) => ({
         },
       }).then(({ data }) => data ?? null)
 
-      const timeoutPromise = new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 8000)
-      )
-
-      suggestion = await Promise.race([invokePromise, timeoutPromise])
+      suggestion = await Promise.race([
+        invokePromise,
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 8000)
+        ),
+      ])
     } catch {
-      // Edge function not deployed, timed out, or unreachable — save without suggestion
+      // Edge function unavailable — build local suggestion from algorithm
+      const prevTaste = history?.[0]?.taste_position ?? 50
+      suggestion = {
+        diagnosis:      `${opt.note}`,
+        changes:        [],
+        reasoning:      `Based on taste position ${currentParams.taste_position}/100`,
+        closerThanLast: Math.abs(currentParams.taste_position - 50) <
+                        Math.abs(prevTaste - 50),
+      }
     }
 
-    // 3. Save to DB
     const { error } = await supabase.from('brews').insert({
       user_id:       user?.id,
       bean_id:       selectedBean.id,
@@ -92,6 +180,10 @@ export const useStore = create<BrewState>((set, get) => ({
 
     set({ lastSuggestion: suggestion })
     await get().fetchRecentBrews()
+
+    // Rebuild user profile
+    const allBrews = get().recentBrews
+    set({ userProfile: buildUserProfile(allBrews) })
   },
 
   fetchRecentBrews: async () => {
@@ -99,8 +191,9 @@ export const useStore = create<BrewState>((set, get) => ({
       .from('brews')
       .select('*, beans(name, origin)')
       .order('created_at', { ascending: false })
-      .limit(20)
-    set({ recentBrews: data ?? [] })
+      .limit(50)
+    const brews = (data ?? []) as Brew[]
+    set({ recentBrews: brews, userProfile: buildUserProfile(brews) })
   },
 
   fetchBeans: async () => {

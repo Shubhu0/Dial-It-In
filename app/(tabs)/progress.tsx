@@ -3,44 +3,34 @@ import {
   ScrollView,
   View,
   Text,
-  FlatList,
+  Pressable,
   StyleSheet,
   SafeAreaView,
+  useWindowDimensions,
 } from 'react-native'
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/lib/store'
 import { Brew, DialInScore } from '@/lib/types'
 import { theme } from '@/constants/theme'
-import { ProgressBar } from '@/components/ProgressBar'
+import { ProgressChart } from '@/components/ProgressChart'
+import { getZoneLabel, getTrend } from '@/lib/algorithms'
 
 const METHOD_LABELS: Record<string, string> = {
   espresso:     'Espresso',
-  pour_over:    'Pour over',
+  pour_over:    'Pour Over',
   aeropress:    'AeroPress',
-  french_press: 'French press',
+  french_press: 'French Press',
 }
 
 function tasteColor(pos: number) {
   if (pos < 45) return theme.colors.sour
-  if (pos <= 55) return theme.colors.balanced
-  return theme.colors.accentDark
-}
-
-function tasteLabel(pos: number) {
-  if (pos < 30) return 'Very Sour'
-  if (pos < 45) return 'Sour'
-  if (pos <= 55) return 'Balanced'
-  if (pos <= 70) return 'Bitter'
-  return 'Very Bitter'
-}
-
-function barColor(rating: number, index: number, brews: Brew[]) {
-  const pos = brews[index]?.taste_position ?? 50
-  return tasteColor(pos)
+  if (pos > 55) return theme.colors.bitter
+  return theme.colors.balanced
 }
 
 export default function ProgressScreen() {
-  const { selectedBean, recentBrews, fetchRecentBrews } = useStore()
+  const { width } = useWindowDimensions()
+  const { selectedBean, recentBrews, fetchRecentBrews, userProfile } = useStore()
   const [score, setScore] = useState<DialInScore | null>(null)
 
   useEffect(() => {
@@ -55,12 +45,24 @@ export default function ProgressScreen() {
     }
   }, [selectedBean?.id])
 
-  const beanBrews = selectedBean
+  const beanBrews: Brew[] = selectedBean
     ? recentBrews.filter((b) => b.bean_id === selectedBean.id)
     : recentBrews
 
-  const last5 = beanBrews.slice(0, 5).reverse()
-  const maxRating = 5
+  const trajectory = beanBrews
+    .map((b) => b.taste_position ?? 50)
+    .reverse()
+
+  const dialInPct = score?.dial_in_pct
+    ?? (trajectory.length
+        ? Math.round(100 - (trajectory.reduce((s, v) => s + Math.abs(v - 50), 0) / trajectory.length) * 2)
+        : 0)
+
+  const trend = getTrend(trajectory)
+  const trendLabel = { improving: '📈 Improving', stable: '→ Stable', regressing: '📉 Needs work' }[trend]
+  const trendColor = { improving: theme.colors.balanced, stable: theme.colors.accent, regressing: theme.colors.sour }[trend]
+
+  const chartWidth = Math.min(width - 64, 360)
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -71,61 +73,128 @@ export default function ProgressScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Your progress</Text>
-          {selectedBean && (
-            <Text style={styles.beanName}>{selectedBean.name}</Text>
+          <View>
+            <Text style={styles.title}>Progress</Text>
+            {selectedBean && (
+              <Text style={styles.beanLabel}>{selectedBean.name}</Text>
+            )}
+          </View>
+          {trajectory.length > 0 && (
+            <View style={[styles.trendBadge, { backgroundColor: trendColor + '22' }]}>
+              <Text style={[styles.trendText, { color: trendColor }]}>{trendLabel}</Text>
+            </View>
           )}
         </View>
 
         {/* Dial-in score card */}
         <View style={styles.scoreCard}>
-          <Text style={styles.scoreLabel}>Dial-in score · last 5 shots</Text>
+          <Text style={styles.scoreCardLabel}>DIAL-IN SCORE</Text>
 
-          {/* Bar chart */}
-          <View style={styles.barChart}>
-            {last5.map((brew, i) => {
-              const rating = brew.rating ?? 3
-              const height = Math.max(8, (rating / maxRating) * 58)
-              return (
-                <View key={brew.id} style={styles.barCol}>
-                  <View
-                    style={[
-                      styles.bar,
-                      { height, backgroundColor: barColor(rating, i, last5) },
-                    ]}
-                  />
-                  <Text style={styles.barNum}>{i + 1}</Text>
-                </View>
-              )
-            })}
-            {last5.length === 0 && (
-              <Text style={styles.emptyChart}>No brews yet</Text>
-            )}
+          {/* Progress ring (simple linear bar) */}
+          <View style={styles.scorePctRow}>
+            <Text style={styles.scorePct}>{Math.max(0, dialInPct)}%</Text>
+            <Text style={styles.scoreHint}>
+              {dialInPct >= 80 ? 'Dialled in 🎯'
+              : dialInPct >= 60 ? 'Getting there'
+              : 'Keep iterating'}
+            </Text>
+          </View>
+          <View style={styles.scoreBarBg}>
+            <View style={[
+              styles.scoreBarFill,
+              { width: `${Math.max(0, Math.min(100, dialInPct))}%`,
+                backgroundColor: dialInPct >= 80 ? theme.colors.balanced
+                  : dialInPct >= 60 ? theme.colors.accent
+                  : theme.colors.sour }
+            ]} />
           </View>
 
-          <ProgressBar pct={score?.dial_in_pct ?? 0} />
+          {/* Mini bar chart (last 5) */}
+          {beanBrews.length > 0 && (
+            <View style={styles.barChart}>
+              {beanBrews.slice(0, 5).reverse().map((brew, i) => {
+                const pos    = brew.taste_position ?? 50
+                const height = Math.max(8, (Math.abs(pos - 50) / 50) * 52 + 8)
+                const color  = tasteColor(pos)
+                return (
+                  <View key={brew.id} style={styles.barCol}>
+                    <View style={styles.barBg}>
+                      <View style={[styles.bar, { height, backgroundColor: color }]} />
+                    </View>
+                    <Text style={styles.barLabel}>{i + 1}</Text>
+                  </View>
+                )
+              })}
+            </View>
+          )}
         </View>
 
+        {/* Trajectory chart */}
+        {trajectory.length >= 2 && (
+          <View style={styles.chartCard}>
+            <Text style={styles.chartTitle}>Taste trajectory</Text>
+            <Text style={styles.chartSub}>Closer to 50 = more balanced</Text>
+            <ProgressChart
+              trajectory={trajectory}
+              width={chartWidth}
+              height={120}
+            />
+          </View>
+        )}
+
+        {/* Personal stats */}
+        {userProfile.totalBrews > 0 && (
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{userProfile.totalBrews}</Text>
+              <Text style={styles.statLabel}>Total brews</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={[styles.statValue, { color: tasteColor(userProfile.averageTaste) }]}>
+                {userProfile.averageTaste}
+              </Text>
+              <Text style={styles.statLabel}>Avg taste</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={[styles.statValue, { color: trendColor }]}>
+                {userProfile.tastePreference}
+              </Text>
+              <Text style={styles.statLabel}>Your target</Text>
+            </View>
+          </View>
+        )}
+
         {/* Shot log */}
-        <Text style={styles.sectionHeader}>Shot log</Text>
+        <Text style={styles.sectionTitle}>Shot log</Text>
         {beanBrews.length === 0 ? (
-          <Text style={styles.empty}>No brews logged yet.</Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>☕</Text>
+            <Text style={styles.emptyText}>No brews logged yet</Text>
+            <Text style={styles.emptyHint}>Head to the Dial tab to log your first brew</Text>
+          </View>
         ) : (
           beanBrews.map((brew, index) => {
             const pos   = brew.taste_position ?? 50
             const color = tasteColor(pos)
+            const date  = brew.created_at
+              ? new Date(brew.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              : ''
             return (
               <View key={brew.id} style={styles.brewRow}>
-                <Text style={styles.brewNum}>#{beanBrews.length - index}</Text>
-                <View style={styles.brewInfo}>
-                  <Text style={styles.brewMethod}>{METHOD_LABELS[brew.method]}</Text>
-                  <Text style={styles.brewParams}>
-                    {brew.dose_g ? `${brew.dose_g}g` : ''}
-                    {brew.grind_setting ? ` · grind ${brew.grind_setting}` : ''}
-                  </Text>
+                <View style={[styles.brewNumBadge, { backgroundColor: color + '22' }]}>
+                  <Text style={[styles.brewNum, { color }]}>#{beanBrews.length - index}</Text>
                 </View>
-                <View style={[styles.tasteBadge, { backgroundColor: color + '22' }]}>
-                  <Text style={[styles.tasteBadgeText, { color }]}>{tasteLabel(pos)}</Text>
+                <View style={styles.brewInfo}>
+                  <Text style={styles.brewMethod}>{METHOD_LABELS[brew.method] ?? brew.method}</Text>
+                  <View style={styles.brewParamsRow}>
+                    {brew.dose_g        ? <Text style={styles.brewParam}>{brew.dose_g}g</Text>        : null}
+                    {brew.grind_setting ? <Text style={styles.brewParam}>grind {brew.grind_setting}</Text> : null}
+                    {brew.time_s        ? <Text style={styles.brewParam}>{brew.time_s}s</Text>        : null}
+                  </View>
+                  {date ? <Text style={styles.brewDate}>{date}</Text> : null}
+                </View>
+                <View style={[styles.tastePill, { backgroundColor: color + '22' }]}>
+                  <Text style={[styles.tastePillText, { color }]}>{getZoneLabel(pos)}</Text>
                 </View>
               </View>
             )
@@ -139,51 +208,128 @@ export default function ProgressScreen() {
 const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: theme.colors.bgPrimary },
   scroll:  { flex: 1 },
-  content: { padding: theme.spacing.standard, paddingBottom: 40 },
-  header: { marginBottom: 16 },
-  title:   { fontSize: 24, fontWeight: '700', color: theme.colors.textPrimary },
-  beanName: { fontSize: 13, color: theme.colors.accent, marginTop: 2 },
+  content: { padding: 20, paddingBottom: 40, gap: 16 },
+
+  header: {
+    flexDirection:  'row',
+    justifyContent: 'space-between',
+    alignItems:     'flex-start',
+  },
+  title:     { fontSize: 26, fontWeight: '800', color: theme.colors.textPrimary },
+  beanLabel: { fontSize: 13, color: theme.colors.accent, marginTop: 2 },
+  trendBadge: {
+    borderRadius:    theme.radius.full,
+    paddingHorizontal: 10,
+    paddingVertical:    5,
+  },
+  trendText: { fontSize: 12, fontWeight: '600' },
+
+  // Score card
   scoreCard: {
     backgroundColor: theme.colors.card,
-    borderRadius:    20,
-    padding:         theme.spacing.base,
-    marginBottom:    20,
-    shadowColor:     '#000',
-    shadowOffset:    { width: 0, height: 2 },
-    shadowOpacity:   0.06,
-    shadowRadius:    8,
-    elevation:       3,
+    borderRadius:    theme.radius.xl,
+    padding:         18,
+    ...theme.shadow.md,
   },
-  scoreLabel: { fontSize: 12, color: theme.colors.textSecondary, marginBottom: 12 },
-  barChart:   { flexDirection: 'row', alignItems: 'flex-end', gap: 10, height: 68, marginBottom: 12 },
-  barCol:     { flex: 1, alignItems: 'center', gap: 4 },
-  bar:        { width: '100%', borderRadius: 4, minHeight: 8 },
-  barNum:     { fontSize: 10, color: theme.colors.textSecondary },
-  emptyChart: { fontSize: 13, color: theme.colors.textSecondary },
-  sectionHeader: {
-    fontSize:     14,
-    fontWeight:   '600',
-    color:        theme.colors.textPrimary,
-    marginBottom: 10,
+  scoreCardLabel: {
+    fontSize:      10,
+    fontWeight:    '700',
+    color:         theme.colors.textSecondary,
+    letterSpacing: 1.2,
+    marginBottom:  12,
   },
-  empty: { fontSize: 13, color: theme.colors.textSecondary },
+  scorePctRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 10 },
+  scorePct:    { fontSize: 40, fontWeight: '800', color: theme.colors.textPrimary },
+  scoreHint:   { fontSize: 13, color: theme.colors.textSecondary },
+  scoreBarBg: {
+    height:          8,
+    backgroundColor: theme.colors.divider,
+    borderRadius:    theme.radius.full,
+    overflow:        'hidden',
+    marginBottom:    16,
+  },
+  scoreBarFill: {
+    height:       8,
+    borderRadius: theme.radius.full,
+  },
+  barChart: {
+    flexDirection:  'row',
+    alignItems:     'flex-end',
+    gap:            8,
+    height:         72,
+    marginTop:      4,
+  },
+  barCol:  { flex: 1, alignItems: 'center', gap: 4 },
+  barBg:   { flex: 1, justifyContent: 'flex-end', width: '100%' },
+  bar:     { width: '100%', borderRadius: 4 },
+  barLabel:{ fontSize: 10, color: theme.colors.textSecondary },
+
+  // Chart card
+  chartCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius:    theme.radius.xl,
+    padding:         16,
+    alignItems:      'center',
+    ...theme.shadow.sm,
+  },
+  chartTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary, alignSelf: 'flex-start' },
+  chartSub:   { fontSize: 11, color: theme.colors.textSecondary, alignSelf: 'flex-start', marginBottom: 12 },
+
+  // Stats row
+  statsRow: { flexDirection: 'row', gap: 10 },
+  statCard: {
+    flex:            1,
+    backgroundColor: theme.colors.card,
+    borderRadius:    theme.radius.lg,
+    padding:         14,
+    alignItems:      'center',
+    ...theme.shadow.xs,
+  },
+  statValue: { fontSize: 22, fontWeight: '800', color: theme.colors.textPrimary },
+  statLabel: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 2, textAlign: 'center' },
+
+  // Section
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary, marginTop: 4 },
+
+  // Empty state
+  emptyState: {
+    backgroundColor: theme.colors.card,
+    borderRadius:    theme.radius.xl,
+    padding:         32,
+    alignItems:      'center',
+    gap:             6,
+    ...theme.shadow.xs,
+  },
+  emptyIcon: { fontSize: 32 },
+  emptyText: { fontSize: 15, fontWeight: '600', color: theme.colors.textPrimary },
+  emptyHint: { fontSize: 12, color: theme.colors.textSecondary, textAlign: 'center' },
+
+  // Brew row
   brewRow: {
     flexDirection:   'row',
     alignItems:      'center',
     backgroundColor: theme.colors.card,
-    borderRadius:    14,
+    borderRadius:    theme.radius.lg,
     padding:         12,
-    marginBottom:    8,
     gap:             10,
+    ...theme.shadow.xs,
   },
-  brewNum:    { fontSize: 13, fontWeight: '700', color: theme.colors.accent, width: 28 },
-  brewInfo:   { flex: 1 },
-  brewMethod: { fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary },
-  brewParams: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
-  tasteBadge: {
-    borderRadius:    8,
+  brewNumBadge: {
+    width: 40, height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brewNum:      { fontSize: 12, fontWeight: '700' },
+  brewInfo:     { flex: 1 },
+  brewMethod:   { fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary },
+  brewParamsRow:{ flexDirection: 'row', gap: 6, marginTop: 2, flexWrap: 'wrap' },
+  brewParam:    { fontSize: 11, color: theme.colors.textSecondary },
+  brewDate:     { fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
+  tastePill: {
+    borderRadius:    theme.radius.full,
     paddingHorizontal: 8,
     paddingVertical:   4,
   },
-  tasteBadgeText: { fontSize: 11, fontWeight: '600' },
+  tastePillText: { fontSize: 11, fontWeight: '600' },
 })

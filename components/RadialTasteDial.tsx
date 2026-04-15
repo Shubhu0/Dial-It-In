@@ -1,185 +1,354 @@
-import React from 'react'
-import { View, Text, StyleSheet, PanResponder } from 'react-native'
-import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg'
+import React, { useCallback, useEffect } from 'react'
+import { View, Text, StyleSheet, Platform, PanResponder } from 'react-native'
+import Svg, { Path, Circle, Defs, RadialGradient, Stop, G } from 'react-native-svg'
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { theme } from '@/constants/theme'
+import { getZoneLabel } from '@/lib/algorithms'
 
-const CX = 120
-const CY = 120
-const R  = 94
+// ── Geometry constants ────────────────────────────────────────────────────────
+const SIZE      = 280
+const CX        = SIZE / 2
+const CY        = SIZE / 2
+const R         = 108
+const TRACK_W   = 14
+const KNOB_R    = 18
 const START_DEG = 135
 const SWEEP_DEG = 270
-const TRACK_W   = 11
-const KNOB_R    = 15
-const SIZE      = 240
 
-function degToRad(d: number) { return (d * Math.PI) / 180 }
+// ── Math helpers ──────────────────────────────────────────────────────────────
+const toRad = (d: number) => (d * Math.PI) / 180
 
-function polarToXY(deg: number) {
+function polar(deg: number) {
   return {
-    x: CX + R * Math.cos(degToRad(deg)),
-    y: CY + R * Math.sin(degToRad(deg)),
+    x: CX + R * Math.cos(toRad(deg)),
+    y: CY + R * Math.sin(toRad(deg)),
   }
 }
 
 function arcPath(startDeg: number, sweepDeg: number): string {
-  const start   = polarToXY(startDeg)
-  const end     = polarToXY(startDeg + sweepDeg)
-  const large   = sweepDeg > 180 ? 1 : 0
-  // Prevent degenerate path when sweep is ~360
-  if (Math.abs(sweepDeg) >= 359.9) {
-    const mid = polarToXY(startDeg + 180)
-    return [
-      `M ${start.x} ${start.y}`,
-      `A ${R} ${R} 0 1 1 ${mid.x} ${mid.y}`,
-      `A ${R} ${R} 0 1 1 ${start.x} ${start.y}`,
-    ].join(' ')
-  }
-  return `M ${start.x} ${start.y} A ${R} ${R} 0 ${large} 1 ${end.x} ${end.y}`
+  if (sweepDeg <= 0.2) return ''
+  const s = polar(startDeg)
+  const e = polar(startDeg + sweepDeg)
+  const large = sweepDeg > 180 ? 1 : 0
+  return `M ${s.x} ${s.y} A ${R} ${R} 0 ${large} 1 ${e.x} ${e.y}`
 }
 
-function xyToPos(x: number, y: number): number {
-  const dx = x - CX
-  const dy = y - CY
-  let angle = (Math.atan2(dy, dx) * 180) / Math.PI
+function touchToValue(touchX: number, touchY: number): number {
+  const dx    = touchX - CX
+  const dy    = touchY - CY
+  let angle   = (Math.atan2(dy, dx) * 180) / Math.PI
   if (angle < 0) angle += 360
+
+  // Map angle → position within arc (135°→405°)
   let adj = angle - START_DEG
   if (adj < 0) adj += 360
+
   if (adj > SWEEP_DEG) {
+    // In dead zone — clamp to nearest endpoint
     adj = (adj - SWEEP_DEG) < (360 - adj) ? SWEEP_DEG : 0
   }
   return Math.max(0, Math.min(100, (adj / SWEEP_DEG) * 100))
 }
 
-function interpolateColor(t: number): string {
-  const sour   = [217, 124, 108]
-  const bal    = [140, 186, 128]
-  const bitter = [107, 79,  58]
-  const [a, b, u] = t <= 0.5
-    ? [sour,   bal,    t * 2]
-    : [bal,    bitter, (t - 0.5) * 2]
-  const lerp = (a: number, b: number) => Math.round(a + (b - a) * u)
-  return `rgb(${lerp(a[0], b[0])},${lerp(a[1], b[1])},${lerp(a[2], b[2])})`
+function valueToAngle(value: number): number {
+  return START_DEG + (value / 100) * SWEEP_DEG
 }
 
-function getZoneLabel(pos: number): string {
-  if (pos <  20) return 'Very Sour'
-  if (pos <  45) return 'Sour'
-  if (pos <= 55) return 'Balanced'
-  if (pos <= 80) return 'Bitter'
-  return 'Very Bitter'
+// ── Color helpers ─────────────────────────────────────────────────────────────
+function lerpColor(a: number[], b: number[], t: number): string {
+  const r = Math.round(a[0] + (b[0] - a[0]) * t)
+  const g = Math.round(a[1] + (b[1] - a[1]) * t)
+  const bv = Math.round(a[2] + (b[2] - a[2]) * t)
+  return `rgb(${r},${g},${bv})`
 }
 
-export function RadialTasteDial({ value, onChange }: { value: number; onChange: (pos: number) => void }) {
-  const [currentPos, setCurrentPos] = React.useState(value)
+function tasteColor(pos: number): string {
+  const sour    = [217, 124, 108]
+  const balanced = [140, 186, 128]
+  const bitter  = [198, 138,  58]
+  const t       = pos / 100
+  if (t <= 0.5) return lerpColor(sour,     balanced, t * 2)
+  return              lerpColor(balanced,  bitter,   (t - 0.5) * 2)
+}
+
+// Zone tick positions
+const ZONE_TICKS = [
+  { value: 0,   label: '' },
+  { value: 25,  label: 'Sour' },
+  { value: 50,  label: '' },
+  { value: 75,  label: 'Bitter' },
+  { value: 100, label: '' },
+]
+
+// ── Component ─────────────────────────────────────────────────────────────────
+interface Props {
+  value:    number
+  onChange: (pos: number) => void
+}
+
+export function RadialTasteDial({ value, onChange }: Props) {
+  // JS-side state for rendering SVG
+  const [displayValue, setDisplayValue] = React.useState(value)
   const posRef = React.useRef(value)
 
-  function updatePos(newPos: number) {
-    posRef.current = newPos
-    setCurrentPos(newPos)
-    onChange(newPos)
-  }
+  // Reanimated values for knob animations
+  const knobScale  = useSharedValue(1)
+  const glowOpacity = useSharedValue(0.3)
+  const snapPulse  = useSharedValue(0)
 
-  const panResponder = React.useRef(
+  // Sync prop changes
+  useEffect(() => {
+    posRef.current = value
+    setDisplayValue(value)
+  }, [value])
+
+  const commit = useCallback((v: number) => {
+    posRef.current = v
+    setDisplayValue(v)
+    onChange(v)
+  }, [onChange])
+
+  // Magnetic snap to 50
+  const snapCheck = useCallback((v: number) => {
+    if (v >= 46 && v <= 54) {
+      commit(50)
+      snapPulse.value = withSpring(1, { damping: 4, stiffness: 300 }, () => {
+        snapPulse.value = withTiming(0, { duration: 400 })
+      })
+    }
+  }, [commit, snapPulse])
+
+  // ── Gesture ────────────────────────────────────────────────────────────────
+  // Use PanResponder on web (pointer events issue with gesture-handler in some
+  // Expo web builds), gesture-handler on native.
+  const useNativeGesture = Platform.OS !== 'web'
+
+  // Native: react-native-gesture-handler
+  const panGesture = Gesture.Pan()
+    .minDistance(0)
+    .onBegin(() => {
+      'worklet'
+      knobScale.value   = withSpring(1.2, { damping: 10, stiffness: 300 })
+      glowOpacity.value = withTiming(0.6, { duration: 150 })
+    })
+    .onUpdate((e) => {
+      'worklet'
+      const v = touchToValue(e.x, e.y)
+      runOnJS(commit)(v)
+    })
+    .onEnd(() => {
+      'worklet'
+      knobScale.value   = withSpring(1,   { damping: 10, stiffness: 300 })
+      glowOpacity.value = withTiming(0.3, { duration: 300 })
+      runOnJS(snapCheck)(posRef.current)
+    })
+
+  // Web: PanResponder fallback
+  const webPan = React.useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder:  () => true,
-      onPanResponderMove: (evt) => {
-        const { locationX, locationY } = evt.nativeEvent
-        const raw = xyToPos(locationX, locationY)
-        const resistance = raw < 10 || raw > 90 ? 0.4 : 1
-        const newPos = Math.max(0, Math.min(100,
-          raw * resistance + posRef.current * (1 - resistance)
-        ))
-        updatePos(newPos)
+      onPanResponderGrant: () => {
+        knobScale.value   = withSpring(1.2, { damping: 10, stiffness: 300 })
+        glowOpacity.value = withTiming(0.6, { duration: 150 })
+      },
+      onPanResponderMove: (_evt: any, gs: any) => {
+        // locationX/Y relative to the view origin
+        const v = touchToValue(
+          _evt.nativeEvent.locationX,
+          _evt.nativeEvent.locationY,
+        )
+        commit(v)
       },
       onPanResponderRelease: () => {
-        if (posRef.current >= 47 && posRef.current <= 53) {
-          updatePos(50)
-        }
+        knobScale.value   = withSpring(1,   { damping: 10, stiffness: 300 })
+        glowOpacity.value = withTiming(0.3, { duration: 300 })
+        snapCheck(posRef.current)
       },
     })
   ).current
 
-  const fillSweep   = (currentPos / 100) * SWEEP_DEG
-  const fillColor   = interpolateColor(currentPos / 100)
-  const knob        = polarToXY(START_DEG + (currentPos / 100) * SWEEP_DEG)
+  // ── Animated styles ────────────────────────────────────────────────────────
+  const knobAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: knobScale.value }],
+  }))
+
+  const snapRingStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(snapPulse.value, [0, 0.5, 1], [0, 0.8, 0], Extrapolation.CLAMP),
+    transform: [{
+      scale: interpolate(snapPulse.value, [0, 1], [1, 1.6], Extrapolation.CLAMP),
+    }],
+  }))
+
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const fillSweep   = Math.max(0.5, (displayValue / 100) * SWEEP_DEG)
+  const fillColor   = tasteColor(displayValue)
+  const knobAngle   = valueToAngle(displayValue)
+  const knobPos     = polar(knobAngle)
   const trackPath   = arcPath(START_DEG, SWEEP_DEG)
-  // Only draw fill arc if there's something to draw
-  const fillArcPath = fillSweep > 0.5 ? arcPath(START_DEG, fillSweep) : null
+  const fillPath    = arcPath(START_DEG, fillSweep)
+  const isBalanced  = displayValue >= 46 && displayValue <= 54
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.dialWrapper} {...panResponder.panHandlers}>
-        <Svg width={SIZE} height={SIZE}>
-          <Defs>
-            <LinearGradient id="dialGrad" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0"   stopColor="rgb(217,124,108)" />
-              <Stop offset="0.5" stopColor="rgb(140,186,128)" />
-              <Stop offset="1"   stopColor="rgb(107,79,58)"   />
-            </LinearGradient>
-          </Defs>
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const dialContent = (
+    <View style={styles.dialWrapper}>
+      <Svg width={SIZE} height={SIZE}>
+        <Defs>
+          <RadialGradient id="glow" cx="50%" cy="50%" r="50%">
+            <Stop offset="0%"   stopColor={fillColor} stopOpacity="0.4" />
+            <Stop offset="100%" stopColor={fillColor} stopOpacity="0"   />
+          </RadialGradient>
+        </Defs>
 
-          {/* Background track */}
+        {/* Subtle background glow when balanced */}
+        {isBalanced && (
+          <Circle cx={CX} cy={CY} r={R - 10} fill="url(#glow)" />
+        )}
+
+        {/* Track */}
+        <Path
+          d={trackPath}
+          stroke={theme.colors.divider}
+          strokeWidth={TRACK_W}
+          strokeLinecap="round"
+          fill="none"
+        />
+
+        {/* Active fill */}
+        {fillPath ? (
           <Path
-            d={trackPath}
-            stroke={theme.colors.divider}
+            d={fillPath}
+            stroke={fillColor}
             strokeWidth={TRACK_W}
             strokeLinecap="round"
             fill="none"
           />
+        ) : null}
 
-          {/* Filled portion */}
-          {fillArcPath && (
+        {/* Zone tick marks */}
+        {ZONE_TICKS.map(({ value: v }) => {
+          const tickAngle = valueToAngle(v)
+          const inner = { x: CX + (R - TRACK_W / 2 - 2) * Math.cos(toRad(tickAngle)), y: CY + (R - TRACK_W / 2 - 2) * Math.sin(toRad(tickAngle)) }
+          const outer = { x: CX + (R + TRACK_W / 2 + 2) * Math.cos(toRad(tickAngle)), y: CY + (R + TRACK_W / 2 + 2) * Math.sin(toRad(tickAngle)) }
+          return (
             <Path
-              d={fillArcPath}
-              stroke={fillColor}
-              strokeWidth={TRACK_W}
-              strokeLinecap="round"
-              fill="none"
+              key={v}
+              d={`M ${inner.x} ${inner.y} L ${outer.x} ${outer.y}`}
+              stroke={theme.colors.bgSecondary}
+              strokeWidth={2}
             />
-          )}
+          )
+        })}
 
-          {/* Knob glow */}
-          <Circle
-            cx={knob.x}
-            cy={knob.y}
-            r={KNOB_R + 7}
-            fill={fillColor}
-            opacity={0.25}
-          />
-          {/* Knob */}
-          <Circle cx={knob.x} cy={knob.y} r={KNOB_R} fill={fillColor} />
-          <Circle cx={knob.x} cy={knob.y} r={KNOB_R} stroke="white" strokeWidth={2.5} fill="none" />
-        </Svg>
+        {/* Knob glow ring */}
+        <Circle
+          cx={knobPos.x}
+          cy={knobPos.y}
+          r={KNOB_R + 10}
+          fill={fillColor}
+          opacity={0.22}
+        />
 
-        {/* Center label */}
-        <View style={styles.centerText} pointerEvents="none">
-          <Text style={[styles.zoneName, { color: fillColor }]}>{getZoneLabel(currentPos)}</Text>
-          <Text style={styles.tasteLabel}>taste</Text>
-        </View>
+        {/* Knob */}
+        <Circle cx={knobPos.x} cy={knobPos.y} r={KNOB_R}    fill={fillColor} />
+        <Circle cx={knobPos.x} cy={knobPos.y} r={KNOB_R - 5} fill="white" opacity={0.9} />
+        <Circle cx={knobPos.x} cy={knobPos.y} r={KNOB_R}    stroke="white" strokeWidth={2.5} fill="none" />
+      </Svg>
+
+      {/* Center label */}
+      <View style={styles.centerLabel} pointerEvents="none">
+        {isBalanced ? (
+          <>
+            <Text style={[styles.zoneText, { color: theme.colors.balanced, fontSize: 22 }]}>✓</Text>
+            <Text style={[styles.zoneText, { color: theme.colors.balanced }]}>Balanced</Text>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.zoneText, { color: fillColor }]}>
+              {getZoneLabel(displayValue)}
+            </Text>
+            <Text style={styles.posText}>{Math.round(displayValue)}</Text>
+          </>
+        )}
+        <Text style={styles.tasteLabel}>taste</Text>
+      </View>
+    </View>
+  )
+
+  return (
+    <View style={styles.container}>
+      {/* Zone labels */}
+      <View style={styles.topLabel}>
+        {displayValue >= 46 && displayValue <= 54 && (
+          <Text style={[styles.snapHint, { color: theme.colors.balanced }]}>snap ✓</Text>
+        )}
       </View>
 
+      {useNativeGesture ? (
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={knobAnimStyle}>
+            {dialContent}
+          </Animated.View>
+        </GestureDetector>
+      ) : (
+        <Animated.View style={knobAnimStyle} {...webPan.panHandlers}>
+          {dialContent}
+        </Animated.View>
+      )}
+
+      {/* Bottom zone tags */}
       <View style={styles.zoneRow}>
-        <Text style={[styles.zoneTag, currentPos < 45 && styles.zoneTagActive]}>Sour</Text>
-        <Text style={[styles.zoneTag, currentPos >= 45 && currentPos <= 55 && styles.zoneTagActive]}>Balanced</Text>
-        <Text style={[styles.zoneTag, currentPos > 55 && styles.zoneTagActive]}>Bitter</Text>
+        <View style={[styles.zoneTag, displayValue < 45 && styles.zoneTagActive]}>
+          <Text style={[styles.zoneTagText, displayValue < 45 && { color: theme.colors.sour }]}>
+            Sour
+          </Text>
+        </View>
+        <View style={[styles.zoneTag, isBalanced && styles.zoneTagActive]}>
+          <Text style={[styles.zoneTagText, isBalanced && { color: theme.colors.balanced }]}>
+            Balanced
+          </Text>
+        </View>
+        <View style={[styles.zoneTag, displayValue > 55 && styles.zoneTagActive]}>
+          <Text style={[styles.zoneTagText, displayValue > 55 && { color: theme.colors.bitter }]}>
+            Bitter
+          </Text>
+        </View>
       </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container:   { alignItems: 'center' },
+  container:  { alignItems: 'center', paddingVertical: 4 },
+  topLabel:   { height: 20, justifyContent: 'center' },
+  snapHint:   { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
   dialWrapper: { width: SIZE, height: SIZE },
-  centerText: {
-    position:       'absolute',
+  centerLabel: {
+    position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
     alignItems:     'center',
     justifyContent: 'center',
   },
-  zoneName:      { fontSize: 18, fontWeight: '700' },
-  tasteLabel:    { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  zoneRow:       { flexDirection: 'row', width: SIZE, marginTop: 8 },
-  zoneTag:       { flex: 1, fontSize: 12, color: theme.colors.textSecondary, textAlign: 'center' },
-  zoneTagActive: { color: theme.colors.textPrimary, fontWeight: '700' },
+  zoneText:   { fontSize: 17, fontWeight: '700', color: theme.colors.textPrimary },
+  posText:    { fontSize: 28, fontWeight: '800', color: theme.colors.textPrimary, lineHeight: 32 },
+  tasteLabel: { fontSize: 11, color: theme.colors.textSecondary, letterSpacing: 0.8, marginTop: 2 },
+  zoneRow:    {
+    flexDirection:  'row',
+    width:          SIZE,
+    justifyContent: 'space-between',
+    marginTop:      4,
+    paddingHorizontal: 12,
+  },
+  zoneTag:     { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  zoneTagActive: {},
+  zoneTagText: { fontSize: 12, color: theme.colors.textTertiary, fontWeight: '500' },
 })
