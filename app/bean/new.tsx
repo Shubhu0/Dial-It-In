@@ -93,7 +93,7 @@ export default function NewBeanScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
-        setSubmitError('Not signed in. Enable Anonymous sign-in in Supabase → Authentication → Providers.')
+        setSubmitError('You need to be signed in to save a bean.')
         return
       }
 

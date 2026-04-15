@@ -9,7 +9,9 @@ import {
   SafeAreaView,
 } from 'react-native'
 import { useRouter } from 'expo-router'
-import { Plus, TrendingUp, Coffee, ChevronRight } from 'lucide-react-native'
+import { Plus, TrendingUp, Coffee, ChevronRight, LogOut } from 'lucide-react-native'
+import { supabase } from '@/lib/supabase'
+import { Alert } from 'react-native'
 import { useStore } from '@/lib/store'
 import { theme } from '@/constants/theme'
 import { BeanChip, LastCoffeeCard, SessionCard } from '@/components/CoffeeCard'
@@ -42,6 +44,17 @@ export default function HomeScreen() {
     fetchBeans()
   }, [])
 
+  function handleSignOut() {
+    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: () => supabase.auth.signOut(),
+      },
+    ])
+  }
+
   const lastBrew = recentBrews[0] ?? null
 
   return (
@@ -55,14 +68,19 @@ export default function HomeScreen() {
         <View style={styles.greetRow}>
           <View>
             <Text style={styles.greetSub}>{greeting()}</Text>
-            <Text style={styles.greetName}>Shubh ☕</Text>
+            <Text style={styles.greetName}>Dial It In ☕</Text>
           </View>
-          {userProfile.totalBrews > 0 && (
-            <View style={styles.statsChip}>
-              <Text style={styles.statsText}>{trendIcon(userProfile.trend)}</Text>
-              <Text style={styles.statsLabel}>{userProfile.totalBrews} brews</Text>
-            </View>
-          )}
+          <View style={styles.greetActions}>
+            {userProfile.totalBrews > 0 && (
+              <View style={styles.statsChip}>
+                <Text style={styles.statsText}>{trendIcon(userProfile.trend)}</Text>
+                <Text style={styles.statsLabel}>{userProfile.totalBrews} brews</Text>
+              </View>
+            )}
+            <Pressable onPress={handleSignOut} style={styles.signOutBtn} hitSlop={8}>
+              <LogOut size={16} stroke={theme.colors.textSecondary} />
+            </Pressable>
+          </View>
         </View>
 
         {/* Hero card ──────────────────────────────────────────────────────── */}
@@ -182,8 +200,19 @@ const styles = StyleSheet.create({
     alignItems:     'center',
     paddingTop:     8,
   },
-  greetSub:  { fontSize: 14, color: theme.colors.textSecondary },
-  greetName: { fontSize: 26, fontWeight: '800', color: theme.colors.textPrimary },
+  greetSub:     { fontSize: 14, color: theme.colors.textSecondary },
+  greetName:    { fontSize: 26, fontWeight: '800', color: theme.colors.textPrimary },
+  greetActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  signOutBtn: {
+    width:           34,
+    height:          34,
+    borderRadius:    17,
+    backgroundColor: theme.colors.card,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     theme.colors.divider,
+  },
   statsChip: {
     backgroundColor: theme.colors.accentMuted,
     borderRadius:    theme.radius.full,
