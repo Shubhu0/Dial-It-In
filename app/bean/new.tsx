@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 import { useForm, Controller } from 'react-hook-form'
 import { useRouter } from 'expo-router'
-import { ArrowLeft, Camera, Image as ImageIcon, ChevronRight } from 'lucide-react-native'
+import { ArrowLeft, Camera, Image as ImageIcon, ChevronRight, Lock } from 'lucide-react-native'
 import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/lib/store'
@@ -40,12 +40,23 @@ type Step = 1 | 2
 
 export default function NewBeanScreen() {
   const router   = useRouter()
-  const { setBean, fetchBeans } = useStore()
+  const { setBean, fetchBeans, beans } = useStore()
 
-  const [step, setStep]             = useState<Step>(1)
-  const [photo, setPhoto]           = useState<string | null>(null)
+  const [step, setStep]               = useState<Step>(1)
+  const [photo, setPhoto]             = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting]   = useState(false)
+  const [showGate, setShowGate]       = useState(false)
+
+  // Check on mount: guest with 1+ bean → show upgrade gate
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      const isAnon = !user?.email  // anonymous users have no email
+      if (isAnon && beans.length >= 1) {
+        setShowGate(true)
+      }
+    })
+  }, [])
 
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
     defaultValues: { roast_level: 'medium', grind_setting: '14' },
@@ -112,6 +123,45 @@ export default function NewBeanScreen() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  // ── Upgrade gate ─────────────────────────────────────────────────────────
+  if (showGate) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <ArrowLeft size={20} stroke={theme.colors.textPrimary} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Add Bean</Text>
+          </View>
+        </View>
+
+        <View style={styles.gateContainer}>
+          <View style={styles.gateIconWrap}>
+            <Lock size={32} stroke={theme.colors.accent} />
+          </View>
+          <Text style={styles.gateTitle}>Create a free account</Text>
+          <Text style={styles.gateSub}>
+            Guest accounts are limited to one bean. Sign up to add unlimited beans, sync across devices, and track your progress over time.
+          </Text>
+
+          <Pressable
+            style={styles.gateSignUpBtn}
+            onPress={() => {
+              supabase.auth.signOut().then(() => router.replace('/auth'))
+            }}
+          >
+            <Text style={styles.gateSignUpText}>Sign up — it's free</Text>
+          </Pressable>
+
+          <Pressable style={styles.gateCancelBtn} onPress={() => router.back()}>
+            <Text style={styles.gateCancelText}>Maybe later</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    )
   }
 
   return (
@@ -468,4 +518,56 @@ const styles = StyleSheet.create({
   },
   nextBtnDisabled: { backgroundColor: theme.colors.divider },
   nextBtnText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+
+  // Upgrade gate
+  gateContainer: {
+    flex:            1,
+    alignItems:      'center',
+    justifyContent:  'center',
+    paddingHorizontal: 32,
+    gap:             16,
+  },
+  gateIconWrap: {
+    width:           72,
+    height:          72,
+    borderRadius:    36,
+    backgroundColor: theme.colors.accentMuted,
+    alignItems:      'center',
+    justifyContent:  'center',
+    marginBottom:    4,
+  },
+  gateTitle: {
+    fontSize:    22,
+    fontWeight:  '800',
+    color:       theme.colors.textPrimary,
+    textAlign:   'center',
+    letterSpacing: -0.3,
+  },
+  gateSub: {
+    fontSize:   14,
+    color:      theme.colors.textSecondary,
+    textAlign:  'center',
+    lineHeight: 21,
+  },
+  gateSignUpBtn: {
+    width:           '100%',
+    height:          52,
+    borderRadius:    theme.radius.xl,
+    backgroundColor: theme.colors.accent,
+    alignItems:      'center',
+    justifyContent:  'center',
+    marginTop:       8,
+    ...theme.shadow.md,
+  },
+  gateSignUpText: { fontSize: 16, fontWeight: '700', color: '#FFF' },
+  gateCancelBtn:  {
+    width:           '100%',
+    height:          48,
+    borderRadius:    theme.radius.xl,
+    borderWidth:     1.5,
+    borderColor:     theme.colors.divider,
+    alignItems:      'center',
+    justifyContent:  'center',
+  },
+  gateCancelText: { fontSize: 15, fontWeight: '500', color: theme.colors.textSecondary },
 })
