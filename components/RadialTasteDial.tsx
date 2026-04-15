@@ -4,11 +4,8 @@ import Svg, { Path, Circle, Defs, RadialGradient, Stop, G } from 'react-native-s
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   runOnJS,
-  interpolate,
-  Extrapolation,
 } from 'react-native-reanimated'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { theme } from '@/constants/theme'
@@ -100,10 +97,8 @@ export function RadialTasteDial({ value, onChange }: Props) {
   const [displayValue, setDisplayValue] = React.useState(value)
   const posRef = React.useRef(value)
 
-  // Reanimated values for knob animations
-  const knobScale  = useSharedValue(1)
-  const glowOpacity = useSharedValue(0.3)
-  const snapPulse  = useSharedValue(0)
+  // Subtle opacity feedback only — no scale (scaling the whole dial is jarring)
+  const dialOpacity = useSharedValue(1)
 
   // Sync prop changes
   useEffect(() => {
@@ -117,15 +112,12 @@ export function RadialTasteDial({ value, onChange }: Props) {
     onChange(v)
   }, [onChange])
 
-  // Magnetic snap to 50
+  // Magnetic snap to 50 on release
   const snapCheck = useCallback((v: number) => {
     if (v >= 46 && v <= 54) {
       commit(50)
-      snapPulse.value = withSpring(1, { damping: 4, stiffness: 300 }, () => {
-        snapPulse.value = withTiming(0, { duration: 400 })
-      })
     }
-  }, [commit, snapPulse])
+  }, [commit])
 
   // ── Gesture ────────────────────────────────────────────────────────────────
   // Use PanResponder on web (pointer events issue with gesture-handler in some
@@ -137,8 +129,7 @@ export function RadialTasteDial({ value, onChange }: Props) {
     .minDistance(0)
     .onBegin(() => {
       'worklet'
-      knobScale.value   = withSpring(1.2, { damping: 10, stiffness: 300 })
-      glowOpacity.value = withTiming(0.6, { duration: 150 })
+      dialOpacity.value = withTiming(0.92, { duration: 80 })
     })
     .onUpdate((e) => {
       'worklet'
@@ -147,8 +138,7 @@ export function RadialTasteDial({ value, onChange }: Props) {
     })
     .onEnd(() => {
       'worklet'
-      knobScale.value   = withSpring(1,   { damping: 10, stiffness: 300 })
-      glowOpacity.value = withTiming(0.3, { duration: 300 })
+      dialOpacity.value = withTiming(1, { duration: 150 })
       runOnJS(snapCheck)(posRef.current)
     })
 
@@ -158,8 +148,7 @@ export function RadialTasteDial({ value, onChange }: Props) {
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder:  () => true,
       onPanResponderGrant: () => {
-        knobScale.value   = withSpring(1.2, { damping: 10, stiffness: 300 })
-        glowOpacity.value = withTiming(0.6, { duration: 150 })
+        dialOpacity.value = withTiming(0.92, { duration: 80 })
       },
       onPanResponderMove: (_evt: any, gs: any) => {
         // locationX/Y relative to the view origin
@@ -170,23 +159,15 @@ export function RadialTasteDial({ value, onChange }: Props) {
         commit(v)
       },
       onPanResponderRelease: () => {
-        knobScale.value   = withSpring(1,   { damping: 10, stiffness: 300 })
-        glowOpacity.value = withTiming(0.3, { duration: 300 })
+        dialOpacity.value = withTiming(1, { duration: 150 })
         snapCheck(posRef.current)
       },
     })
   ).current
 
   // ── Animated styles ────────────────────────────────────────────────────────
-  const knobAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: knobScale.value }],
-  }))
-
-  const snapRingStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(snapPulse.value, [0, 0.5, 1], [0, 0.8, 0], Extrapolation.CLAMP),
-    transform: [{
-      scale: interpolate(snapPulse.value, [0, 1], [1, 1.6], Extrapolation.CLAMP),
-    }],
+  const dialAnimStyle = useAnimatedStyle(() => ({
+    opacity: dialOpacity.value,
   }))
 
   // ── Derived values ─────────────────────────────────────────────────────────
@@ -286,21 +267,14 @@ export function RadialTasteDial({ value, onChange }: Props) {
 
   return (
     <View style={styles.container}>
-      {/* Zone labels */}
-      <View style={styles.topLabel}>
-        {displayValue >= 46 && displayValue <= 54 && (
-          <Text style={[styles.snapHint, { color: theme.colors.balanced }]}>snap ✓</Text>
-        )}
-      </View>
-
       {useNativeGesture ? (
         <GestureDetector gesture={panGesture}>
-          <Animated.View style={knobAnimStyle}>
+          <Animated.View style={dialAnimStyle}>
             {dialContent}
           </Animated.View>
         </GestureDetector>
       ) : (
-        <Animated.View style={knobAnimStyle} {...webPan.panHandlers}>
+        <Animated.View style={dialAnimStyle} {...webPan.panHandlers}>
           {dialContent}
         </Animated.View>
       )}
@@ -328,9 +302,7 @@ export function RadialTasteDial({ value, onChange }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container:  { alignItems: 'center', paddingVertical: 4 },
-  topLabel:   { height: 20, justifyContent: 'center' },
-  snapHint:   { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+  container:   { alignItems: 'center', paddingVertical: 4 },
   dialWrapper: { width: SIZE, height: SIZE },
   centerLabel: {
     position: 'absolute',
