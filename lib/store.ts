@@ -24,6 +24,9 @@ interface BrewState {
   // Adaptive learning
   userProfile: UserProfile
 
+  // Guest mode (local-only, no Supabase)
+  isGuest: boolean
+
   // Actions
   setBean:          (bean: Bean) => void
   setMethod:        (method: Method) => void
@@ -33,6 +36,8 @@ interface BrewState {
   saveBrew:         () => Promise<void>
   fetchRecentBrews: () => Promise<void>
   fetchBeans:       () => Promise<void>
+  setGuestMode:     (v: boolean) => void
+  addBeanLocally:   (bean: Bean) => void
 }
 
 const DEFAULT_PARAMS: BrewParams = {
@@ -60,6 +65,7 @@ export const useStore = create<BrewState>((set, get) => ({
   recentBrews:    [],
   beans:          [],
   userProfile:    DEFAULT_PROFILE,
+  isGuest:        false,
 
   setBean: (bean) => {
     set({ selectedBean: bean })
@@ -121,9 +127,42 @@ export const useStore = create<BrewState>((set, get) => ({
     }))
   },
 
+  setGuestMode: (v) => set({ isGuest: v }),
+
+  addBeanLocally: (bean) =>
+    set((s) => ({ beans: [bean, ...s.beans] })),
+
   saveBrew: async () => {
-    const { selectedBean, selectedMethod, currentParams } = get()
+    const { selectedBean, selectedMethod, currentParams, isGuest, recentBrews } = get()
     if (!selectedBean) return
+
+    const opt = optimizeNextDial(currentParams.taste_position, selectedMethod)
+
+    // Guest mode: save locally, no Supabase
+    if (isGuest) {
+      const prevTaste = recentBrews.find(b => b.bean_id === selectedBean.id)?.taste_position ?? 50
+      const suggestion: Suggestion = {
+        diagnosis:      opt.note,
+        changes:        [],
+        reasoning:      `Based on taste position ${currentParams.taste_position}/100`,
+        closerThanLast: Math.abs(currentParams.taste_position - 50) < Math.abs(prevTaste - 50),
+      }
+      const localBrew: Brew = {
+        id:            `local_${Date.now()}`,
+        user_id:       'guest',
+        bean_id:       selectedBean.id,
+        method:        selectedMethod,
+        ...currentParams,
+        ai_suggestion: suggestion,
+        created_at:    new Date().toISOString(),
+        beans:         { name: selectedBean.name, origin: selectedBean.origin },
+      }
+      set((s) => {
+        const newBrews = [localBrew, ...s.recentBrews]
+        return { recentBrews: newBrews, lastSuggestion: suggestion, userProfile: buildUserProfile(newBrews) }
+      })
+      return
+    }
 
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -134,9 +173,6 @@ export const useStore = create<BrewState>((set, get) => ({
       .eq('bean_id', selectedBean.id)
       .order('created_at', { ascending: false })
       .limit(5)
-
-    // Compute local optimisation hint
-    const opt = optimizeNextDial(currentParams.taste_position, selectedMethod)
 
     // Call Edge Function best-effort (8 s timeout)
     let suggestion: Suggestion | null = null
@@ -157,10 +193,9 @@ export const useStore = create<BrewState>((set, get) => ({
         ),
       ])
     } catch {
-      // Edge function unavailable — build local suggestion from algorithm
       const prevTaste = history?.[0]?.taste_position ?? 50
       suggestion = {
-        diagnosis:      `${opt.note}`,
+        diagnosis:      opt.note,
         changes:        [],
         reasoning:      `Based on taste position ${currentParams.taste_position}/100`,
         closerThanLast: Math.abs(currentParams.taste_position - 50) <
@@ -181,12 +216,12 @@ export const useStore = create<BrewState>((set, get) => ({
     set({ lastSuggestion: suggestion })
     await get().fetchRecentBrews()
 
-    // Rebuild user profile
     const allBrews = get().recentBrews
     set({ userProfile: buildUserProfile(allBrews) })
   },
 
   fetchRecentBrews: async () => {
+    if (get().isGuest) return  // local brews already in state
     const { data } = await supabase
       .from('brews')
       .select('*, beans(name, origin)')
@@ -197,6 +232,7 @@ export const useStore = create<BrewState>((set, get) => ({
   },
 
   fetchBeans: async () => {
+    if (get().isGuest) return  // local beans already in state
     const { data } = await supabase
       .from('beans')
       .select('*')

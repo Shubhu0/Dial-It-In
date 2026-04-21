@@ -14,11 +14,13 @@ import {
 import { useRouter } from 'expo-router'
 import { supabase } from '@/lib/supabase'
 import { theme } from '@/constants/theme'
+import { useStore } from '@/lib/store'
 
 type Mode = 'signin' | 'signup'
 
 export default function AuthScreen() {
-  const router = useRouter()
+  const router        = useRouter()
+  const setGuestMode  = useStore(s => s.setGuestMode)
 
   const [mode, setMode]         = useState<Mode>('signin')
   const [email, setEmail]       = useState('')
@@ -59,18 +61,9 @@ export default function AuthScreen() {
     }
   }
 
-  async function handleGuestSignIn() {
-    setError(null)
-    setLoading(true)
-    try {
-      const { error: err } = await supabase.auth.signInAnonymously()
-      if (err) throw err
-      // _layout.tsx will redirect
-    } catch (e: any) {
-      setError('Guest sign-in is not enabled. Please create an account.')
-    } finally {
-      setLoading(false)
-    }
+  function handleGuestSignIn() {
+    setGuestMode(true)
+    // _layout.tsx route guard detects isGuest=true and redirects to (tabs)
   }
 
   return (

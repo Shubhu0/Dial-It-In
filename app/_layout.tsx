@@ -6,12 +6,14 @@ import { StatusBar } from 'expo-status-bar'
 import { useEffect, useState } from 'react'
 import { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { useStore } from '@/lib/store'
 
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null>(null)
   const [ready,   setReady]   = useState(false)
   const router   = useRouter()
   const segments = useSegments()
+  const isGuest  = useStore(s => s.isGuest)
 
   // ── Bootstrap: restore existing session ────────────────────────────────────
   useEffect(() => {
@@ -31,14 +33,15 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready) return
 
-    const onAuthScreen = segments[0] === 'auth'
+    const onAuthScreen   = segments[0] === 'auth'
+    const isAuthenticated = !!session || isGuest
 
-    if (!session && !onAuthScreen) {
+    if (!isAuthenticated && !onAuthScreen) {
       router.replace('/auth')
-    } else if (session && onAuthScreen) {
+    } else if (isAuthenticated && onAuthScreen) {
       router.replace('/(tabs)')
     }
-  }, [session, ready, segments])
+  }, [session, ready, segments, isGuest])
 
   if (!ready) return null
 

@@ -40,7 +40,7 @@ type Step = 1 | 2
 
 export default function NewBeanScreen() {
   const router   = useRouter()
-  const { setBean, fetchBeans, beans } = useStore()
+  const { setBean, fetchBeans, beans, isGuest, setGuestMode, addBeanLocally } = useStore()
 
   const [step, setStep]               = useState<Step>(1)
   const [photo, setPhoto]             = useState<string | null>(null)
@@ -50,12 +50,7 @@ export default function NewBeanScreen() {
 
   // Check on mount: guest with 1+ bean → show upgrade gate
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      const isAnon = !user?.email  // anonymous users have no email
-      if (isAnon && beans.length >= 1) {
-        setShowGate(true)
-      }
-    })
+    if (isGuest && beans.length >= 1) setShowGate(true)
   }, [])
 
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
@@ -102,6 +97,19 @@ export default function NewBeanScreen() {
     setSubmitError(null)
     setSubmitting(true)
     try {
+      if (isGuest) {
+        const localBean: Bean = {
+          id:         `local_${Date.now()}`,
+          user_id:    'guest',
+          ...data,
+          created_at: new Date().toISOString(),
+        }
+        addBeanLocally(localBean)
+        setBean(localBean)
+        router.replace('/(tabs)/dial')
+        return
+      }
+
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         setSubmitError('You need to be signed in to save a bean.')
@@ -150,7 +158,8 @@ export default function NewBeanScreen() {
           <Pressable
             style={styles.gateSignUpBtn}
             onPress={() => {
-              supabase.auth.signOut().then(() => router.replace('/auth'))
+              setGuestMode(false)
+              router.replace('/auth')
             }}
           >
             <Text style={styles.gateSignUpText}>Sign up — it's free</Text>
