@@ -31,17 +31,21 @@ export function BeanChip({ bean, isSelected, onPress }: BeanChipProps) {
     onPress()
   }
 
+  const roastColor = ({
+    light: '#F5C060',
+    medium: '#C68A3A',
+    'medium-dark': '#8B5E3C',
+    dark: '#4A2F1A',
+  }[bean.roast_level ?? 'medium']) ?? theme.colors.accent
+
   return (
     <Pressable onPress={handlePress}>
       <Animated.View style={[styles.beanChip, isSelected && styles.beanChipSelected, animStyle]}>
-        <View style={[styles.roastDot, {
-          backgroundColor: {
-            light: '#F5C060',
-            medium: '#C68A3A',
-            'medium-dark': '#8B5E3C',
-            dark: '#4A2F1A',
-          }[bean.roast_level ?? 'medium'] ?? theme.colors.accent,
-        }]} />
+        {bean.image_url ? (
+          <Image source={{ uri: bean.image_url }} style={styles.beanThumb} />
+        ) : (
+          <View style={[styles.roastDot, { backgroundColor: roastColor }]} />
+        )}
         <View>
           <Text style={[styles.beanName, isSelected && styles.beanNameSelected]} numberOfLines={1}>
             {bean.name}
@@ -85,8 +89,12 @@ export function LastCoffeeCard({ bean, lastBrew, onPress }: LastCoffeeCardProps)
 
   return (
     <Pressable style={styles.heroCard} onPress={onPress}>
-      {/* Color band */}
-      <View style={[styles.colorBand, { backgroundColor: theme.colors.accentMuted }]} />
+      {/* Bean photo banner — shown only when an image exists */}
+      {bean.image_url ? (
+        <Image source={{ uri: bean.image_url }} style={styles.heroBanner} />
+      ) : (
+        <View style={styles.colorBand} />
+      )}
 
       <View style={styles.heroContent}>
         <View style={styles.heroLeft}>
@@ -177,6 +185,7 @@ const styles = StyleSheet.create({
     borderColor:     theme.colors.accent,
     backgroundColor: theme.colors.accentMuted,
   },
+  beanThumb:  { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.colors.divider },
   roastDot:   { width: 10, height: 10, borderRadius: 5 },
   beanName:   { fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary, maxWidth: 120 },
   beanNameSelected: { color: theme.colors.accentDark },
@@ -204,7 +213,8 @@ const styles = StyleSheet.create({
     overflow:        'hidden',
     ...theme.shadow.md,
   },
-  colorBand:   { height: 4, backgroundColor: theme.colors.accent },
+  heroBanner:  { width: '100%', height: 120, backgroundColor: theme.colors.accentMuted },
+  colorBand:   { height: 4, backgroundColor: theme.colors.accentMuted },
   heroContent: {
     flexDirection:  'row',
     justifyContent: 'space-between',

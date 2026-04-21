@@ -211,7 +211,7 @@ export const useStore = create<BrewState>((set, get) => ({
       ai_suggestion: suggestion,
     })
 
-    if (error) throw new Error(error.message)
+    if (error) throw new Error('Failed to save brew. Please try again.')
 
     set({ lastSuggestion: suggestion })
     await get().fetchRecentBrews()

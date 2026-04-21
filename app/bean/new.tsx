@@ -93,6 +93,28 @@ export default function NewBeanScreen() {
     if (!result.canceled) setPhoto(result.assets[0].uri)
   }
 
+  async function uploadPhoto(uri: string, userId: string): Promise<string | null> {
+    try {
+      const ext = (uri.split('.').pop()?.toLowerCase().split('?')[0]) ?? 'jpg'
+      const mime = ext === 'png' ? 'image/png'
+                 : ext === 'webp' ? 'image/webp'
+                 : 'image/jpeg'
+      const path = `${userId}/${Date.now()}.${ext}`
+
+      const response = await fetch(uri)
+      const blob = await response.blob()
+
+      const { data, error } = await supabase.storage
+        .from('bean-images')
+        .upload(path, blob, { contentType: mime, upsert: false })
+
+      if (error) return null
+      return supabase.storage.from('bean-images').getPublicUrl(data.path).data.publicUrl
+    } catch {
+      return null  // Non-fatal: bean is saved without image
+    }
+  }
+
   async function onSubmit(data: FormData) {
     setSubmitError(null)
     setSubmitting(true)
@@ -102,6 +124,7 @@ export default function NewBeanScreen() {
           id:         `local_${Date.now()}`,
           user_id:    'guest',
           ...data,
+          image_url:  photo ?? undefined,   // local URI only for guests
           created_at: new Date().toISOString(),
         }
         addBeanLocally(localBean)
@@ -112,17 +135,20 @@ export default function NewBeanScreen() {
 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
-        setSubmitError('You need to be signed in to save a bean.')
+        setSubmitError('Please sign in to save a bean.')
         return
       }
 
+      // Upload photo to Supabase Storage (non-fatal if it fails)
+      const imageUrl = photo ? await uploadPhoto(photo, user.id) : null
+
       const { data: bean, error } = await supabase
         .from('beans')
-        .insert({ ...data, user_id: user.id })
+        .insert({ ...data, user_id: user.id, image_url: imageUrl })
         .select()
         .single()
 
-      if (error) { setSubmitError(error.message); return }
+      if (error) { setSubmitError('Failed to save bean. Please try again.'); return }
       if (bean) {
         setBean(bean as Bean)
         await fetchBeans()

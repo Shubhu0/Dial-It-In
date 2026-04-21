@@ -15,6 +15,7 @@ export interface Bean {
   roast_date?: string
   notes?: string
   grind_setting?: string
+  image_url?: string
   created_at?: string
 }
 
