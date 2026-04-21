@@ -45,10 +45,16 @@ export default function AuthScreen() {
     setLoading(true)
     try {
       if (mode === 'signup') {
-        const { error: err } = await supabase.auth.signUp({ email, password })
+        const { data, error: err } = await supabase.auth.signUp({ email, password })
         if (err) throw err
-        setSuccess('Account created! Check your email to confirm, then sign in.')
-        setMode('signin')
+        if (data.session) {
+          // Email confirmation is disabled — user is signed in immediately.
+          // _layout.tsx onAuthStateChange will redirect to (tabs).
+        } else {
+          // Email confirmation is enabled — ask them to check their inbox.
+          setSuccess('Account created! Check your email to confirm, then sign in.')
+          setMode('signin')
+        }
       } else {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password })
         if (err) throw err
