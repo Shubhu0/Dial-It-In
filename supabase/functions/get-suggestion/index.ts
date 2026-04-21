@@ -1,7 +1,13 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const AI_API_URL = 'https://api.anthropic.com/v1/messages'
-const AI_MODEL   = 'claude-opus-4-6'
+const AI_MODEL   = 'claude-haiku-4-5-20251001'   // fast + cheap for suggestions
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   espresso: `
@@ -50,20 +56,67 @@ Rules for French press:
 `,
 }
 
+const VALID_METHODS = new Set(['espresso', 'pour_over', 'aeropress', 'french_press'])
+
+function validateInput(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return 'Invalid request body'
+  const { method, params, history, bean } = body as Record<string, unknown>
+
+  if (typeof method !== 'string' || !VALID_METHODS.has(method))
+    return 'Invalid method'
+  if (typeof params !== 'object' || params === null)
+    return 'Invalid params'
+  if (!Array.isArray(history) || history.length > 20)
+    return 'Invalid history'
+  if (typeof bean !== 'object' || bean === null)
+    return 'Invalid bean'
+
+  const p = params as Record<string, unknown>
+  const taste = Number(p['taste_position'])
+  if (isNaN(taste) || taste < 0 || taste > 100)
+    return 'taste_position must be 0–100'
+
+  return null  // valid
+}
+
 function buildUserMessage(params: unknown, history: unknown[], bean: Record<string, unknown>): string {
+  // Sanitise bean fields — only forward known safe string fields
+  const safeName   = String(bean['name']        ?? '').slice(0, 100)
+  const safeOrigin = String(bean['origin']       ?? 'unknown origin').slice(0, 100)
+  const safeRoast  = String(bean['roast_level']  ?? '').slice(0, 20)
+  const safeDate   = String(bean['roast_date']   ?? 'unknown').slice(0, 20)
+
+  // Sanitise history — only forward known numeric/string fields
+  const safeHistory = (history as Record<string, unknown>[])
+    .slice(0, 10)
+    .map((h, i) => {
+      const taste  = Number(h['taste_position'])
+      const method = String(h['method'] ?? '').slice(0, 20)
+      return `Session ${i + 1}: taste=${isNaN(taste) ? '?' : taste}/100, method=${method}`
+    })
+
+  // Sanitise params — only forward known numeric/string fields
+  const safeParams = {
+    dose_g:         Number((params as Record<string, unknown>)['dose_g'])         || null,
+    yield_g:        Number((params as Record<string, unknown>)['yield_g'])        || null,
+    time_s:         Number((params as Record<string, unknown>)['time_s'])         || null,
+    water_g:        Number((params as Record<string, unknown>)['water_g'])        || null,
+    brew_time_s:    Number((params as Record<string, unknown>)['brew_time_s'])    || null,
+    grind_setting:  String((params as Record<string, unknown>)['grind_setting']   ?? '').slice(0, 20),
+    water_temp_c:   Number((params as Record<string, unknown>)['water_temp_c'])   || null,
+    taste_position: Number((params as Record<string, unknown>)['taste_position']) || 50,
+  }
+
   return `
-Bean: ${bean['name']}, ${bean['origin'] ?? 'unknown origin'}, ${bean['roast_level']} roast, roasted ${bean['roast_date'] ?? 'unknown'}.
+Bean: ${safeName}, ${safeOrigin}, ${safeRoast} roast, roasted ${safeDate}.
 
 Current brew parameters:
-${JSON.stringify(params, null, 2)}
+${JSON.stringify(safeParams, null, 2)}
 
-Last ${history.length} sessions for this bean (oldest first):
-${history.map((h: unknown, i: number) => {
-  const session = h as Record<string, unknown>
-  return `Session ${i + 1}: taste=${session['taste_position']}/100, ${JSON.stringify(h)}`
-}).join('\n')}
+Last ${safeHistory.length} sessions for this bean (oldest first):
+${safeHistory.join('\n')}
 
-The user rated this brew: taste position ${(params as Record<string, unknown>)['taste_position']}/100.
+The user rated this brew: taste position ${safeParams.taste_position}/100.
 0 = very sour, 50 = balanced, 100 = very bitter.
 
 Give your adjustment suggestion as JSON.
@@ -71,23 +124,61 @@ Give your adjustment suggestion as JSON.
 }
 
 serve(async (req) => {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  }
-
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { headers: CORS_HEADERS })
   }
 
-  try {
-    const { method, params, history, bean } = await req.json()
+  // ── 1. Verify the caller is an authenticated Supabase user ─────────────────
+  const authHeader = req.headers.get('Authorization') ?? ''
+  if (!authHeader.startsWith('Bearer ')) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status:  401,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    })
+  }
 
-    const systemPrompt = SYSTEM_PROMPTS[method] ?? SYSTEM_PROMPTS['espresso']
-    const userMessage  = buildUserMessage(params, history ?? [], bean)
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: authHeader } } }
+  )
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status:  401,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // ── 2. Parse and validate the request body ─────────────────────────────────
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status:  400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    })
+  }
+
+  const validationError = validateInput(body)
+  if (validationError) {
+    return new Response(JSON.stringify({ error: validationError }), {
+      status:  400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    })
+  }
+
+  // ── 3. Call the AI ─────────────────────────────────────────────────────────
+  try {
+    const { method, params, history, bean } = body as Record<string, unknown>
+
+    const systemPrompt = SYSTEM_PROMPTS[method as string] ?? SYSTEM_PROMPTS['espresso']
+    const userMessage  = buildUserMessage(params, history as unknown[], bean as Record<string, unknown>)
 
     const res = await fetch(AI_API_URL, {
-      method: 'POST',
+      method:  'POST',
       headers: {
         'Content-Type':      'application/json',
         'x-api-key':         Deno.env.get('AI_API_KEY')!,
@@ -101,17 +192,28 @@ serve(async (req) => {
       }),
     })
 
-    const data       = await res.json()
-    const text       = data.content[0].text
+    if (!res.ok) {
+      console.error('AI API error', res.status, await res.text())
+      return new Response(JSON.stringify({ error: 'AI service unavailable' }), {
+        status:  502,
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const data = await res.json()
+    const text = data?.content?.[0]?.text
+    if (!text) throw new Error('Empty AI response')
+
     const suggestion = JSON.parse(text)
 
     return new Response(JSON.stringify(suggestion), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
     })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error('get-suggestion error:', err)
+    return new Response(JSON.stringify({ error: 'Internal error' }), {
       status:  500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
     })
   }
 })
