@@ -25,7 +25,13 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "Dial It In",
+      "shortName": "Dial It In",
+      "description": "Track, learn, and perfect your brew",
+      "themeColor": "#C68A3A",
+      "backgroundColor": "#F5EDD8",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router"
