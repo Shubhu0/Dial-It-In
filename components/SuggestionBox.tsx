@@ -1,12 +1,12 @@
 import React, { useEffect } from 'react'
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native'
+import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native'
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
   withTiming,
 } from 'react-native-reanimated'
-import { DialTip, Suggestion } from '@/lib/types'
+import { DialTip, Suggestion, SuggestionChange } from '@/lib/types'
 import { theme } from '@/constants/theme'
 
 // ── Live dial tip (shown while dragging, no save needed) ─────────────────────
@@ -80,9 +80,10 @@ export function LiveTipBox({ tip, zone }: DialTipProps) {
 interface SavedSuggestionProps {
   suggestion: Suggestion | null
   loading:    boolean
+  onApply?:   (changes: SuggestionChange[]) => void
 }
 
-export function SavedSuggestionBox({ suggestion, loading }: SavedSuggestionProps) {
+export function SavedSuggestionBox({ suggestion, loading, onApply }: SavedSuggestionProps) {
   const opacity   = useSharedValue(0)
   const scale     = useSharedValue(0.95)
 
@@ -124,16 +125,24 @@ export function SavedSuggestionBox({ suggestion, loading }: SavedSuggestionProps
 
       {suggestion.changes.length > 0 && (
         <>
-          <Text style={[styles.aiLabel, { marginTop: 10 }]}>ADJUSTMENTS</Text>
+          <Text style={[styles.aiLabel, { marginTop: 10 }]}>NEXT ADJUSTMENTS</Text>
           {suggestion.changes.map((c, i) => (
             <View key={i} style={styles.changeRow}>
               <Text style={styles.changeArrow}>
                 {c.direction === 'up' ? '↑' : c.direction === 'down' ? '↓' : '→'}
               </Text>
-              <Text style={styles.changeParam}>{c.param}</Text>
-              <Text style={styles.changeValues}>{c.from} → {c.to}</Text>
+              <Text style={styles.changeParam}>{PARAM_LABELS[c.param] ?? c.param}</Text>
+              <Text style={styles.changeValues}>{c.from} → <Text style={styles.changeToValue}>{c.to}</Text></Text>
             </View>
           ))}
+          {onApply && (
+            <Pressable
+              style={styles.applyBtn}
+              onPress={() => onApply(suggestion.changes)}
+            >
+              <Text style={styles.applyBtnText}>Apply these changes →</Text>
+            </Pressable>
+          )}
         </>
       )}
 
@@ -148,6 +157,15 @@ export function SavedSuggestionBox({ suggestion, loading }: SavedSuggestionProps
       )}
     </Animated.View>
   )
+}
+
+const PARAM_LABELS: Record<string, string> = {
+  grind_setting: 'Grind',
+  yield_g:       'Yield',
+  time_s:        'Shot time',
+  brew_time_s:   'Brew time',
+  dose_g:        'Dose',
+  water_temp_c:  'Temp',
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -209,6 +227,19 @@ const styles = StyleSheet.create({
     marginTop:  10,
     fontStyle:  'italic',
   },
+  changeToValue: { fontWeight: '700', color: theme.colors.textPrimary },
+
+  applyBtn: {
+    marginTop:       12,
+    height:          40,
+    borderRadius:    theme.radius.lg,
+    backgroundColor: theme.colors.accent,
+    alignItems:      'center',
+    justifyContent:  'center',
+    ...theme.shadow.xs,
+  },
+  applyBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+
   closerBadge: {
     marginTop:       10,
     alignSelf:       'flex-start',

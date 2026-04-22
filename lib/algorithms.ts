@@ -8,6 +8,7 @@ import {
   UserProfile,
   BrewParams,
   Brew,
+  SuggestionChange,
 } from './types'
 
 // ── Zone classification ───────────────────────────────────────────────────────
@@ -409,6 +410,146 @@ export function optimizeNextDial(taste: number, method: Method): OptimizationRes
     yieldAdjust:  Math.round(yieldAdjust * 10) / 10,
     note: notes.length ? `Try: ${notes.join(', ')}` : 'Minimal adjustment needed',
   }
+}
+
+// ── 10. Applicable changes (numeric, for Apply button) ───────────────────────
+// Converts gradient-descent deltas into concrete before/after values.
+
+export function buildApplicableChanges(
+  params:   BrewParams,
+  tastePos: number,
+  method:   Method,
+): SuggestionChange[] {
+  const opt     = optimizeNextDial(tastePos, method)
+  const changes: SuggestionChange[] = []
+
+  const currentGrind = parseFloat(params.grind_setting) || 14
+  if (Math.abs(opt.grindAdjust) >= 0.5) {
+    const next = Math.max(1, Math.min(40, Math.round(currentGrind + opt.grindAdjust)))
+    changes.push({
+      param:     'grind_setting',
+      from:      String(Math.round(currentGrind)),
+      to:        String(next),
+      direction: opt.grindAdjust > 0 ? 'up' : 'down',
+    })
+  }
+
+  if (method === 'espresso') {
+    if (Math.abs(opt.yieldAdjust) >= 0.5) {
+      const curr = params.yield_g || 36
+      const next = Math.round(Math.max(20, Math.min(80, curr + opt.yieldAdjust)))
+      changes.push({
+        param:     'yield_g',
+        from:      `${Math.round(curr)}g`,
+        to:        `${next}g`,
+        direction: opt.yieldAdjust > 0 ? 'up' : 'down',
+      })
+    }
+    if (Math.abs(opt.timeAdjust) >= 1) {
+      const curr = params.time_s || 28
+      const next = Math.round(Math.max(18, Math.min(50, curr + opt.timeAdjust)))
+      changes.push({
+        param:     'time_s',
+        from:      `${curr}s`,
+        to:        `${next}s`,
+        direction: opt.timeAdjust > 0 ? 'up' : 'down',
+      })
+    }
+  } else {
+    if (Math.abs(opt.timeAdjust) >= 3) {
+      const curr = params.brew_time_s || 180
+      const next = Math.round(Math.max(30, Math.min(600, curr + opt.timeAdjust * 4)))
+      changes.push({
+        param:     'brew_time_s',
+        from:      `${curr}s`,
+        to:        `${next}s`,
+        direction: opt.timeAdjust > 0 ? 'up' : 'down',
+      })
+    }
+  }
+
+  return changes
+}
+
+// ── 11. Smart parameter warnings ──────────────────────────────────────────────
+// Returns a list of human-readable warnings for implausible param combinations.
+
+export function getBrewWarnings(params: BrewParams, method: Method): string[] {
+  const warnings: string[] = []
+
+  if (method === 'espresso') {
+    const dose  = params.dose_g  || 18
+    const yield_ = params.yield_g || 36
+    const ratio = yield_ / dose
+    const time  = params.time_s  || 28
+    if (ratio < 1.5) warnings.push('Yield is very low — likely to taste harsh and over-extracted')
+    if (ratio > 3.0) warnings.push('Ratio over 1:3 — may taste watery and under-extracted')
+    if (time < 20)   warnings.push('Shot under 20s — likely to taste sour and thin')
+    if (time > 42)   warnings.push('Shot over 42s — risk of bitterness and over-extraction')
+  }
+
+  if (method === 'pour_over' || method === 'aeropress') {
+    const dose  = params.dose_g  || 15
+    const water = params.water_g || 250
+    const ratio = water / dose
+    if (ratio < 12) warnings.push('Ratio under 1:12 — very concentrated, may taste bitter')
+    if (ratio > 20) warnings.push('Ratio over 1:20 — too weak, likely to taste sour and watery')
+  }
+
+  if (method === 'french_press') {
+    const dose  = params.dose_g  || 30
+    const water = params.water_g || 500
+    const ratio = water / dose
+    if (ratio < 12) warnings.push('Ratio under 1:12 — very strong')
+    if (ratio > 18) warnings.push('Ratio over 1:18 — may taste weak and watery')
+  }
+
+  const temp = params.water_temp_c
+  if (temp !== undefined) {
+    if (temp < 85) warnings.push('Water temp below 85°C — too low for proper extraction')
+    if (temp > 97) warnings.push('Water temp above 97°C — may scorch the grounds')
+  }
+
+  return warnings
+}
+
+// ── 12. Dial DNA — behavioural pattern analysis ───────────────────────────────
+// Returns insight strings describing the user's brewing patterns.
+
+export function getDialDNA(brews: Brew[]): string[] {
+  if (brews.length < 3) return []
+
+  const insights:  string[] = []
+  const recent     = brews.slice(0, 10)
+  const positions  = recent.map((b) => b.taste_position ?? 50)
+
+  // Over-correction: large jumps between sessions
+  const jumps   = positions.slice(0, -1).map((p, i) => Math.abs(p - positions[i + 1]))
+  const avgJump = jumps.reduce((a, b) => a + b, 0) / jumps.length
+  if (avgJump > 18) insights.push('You tend to over-correct — try smaller adjustments each session')
+
+  // Taste preference drift
+  const avg = positions.reduce((a, b) => a + b, 0) / positions.length
+  if (avg < 42) insights.push('You consistently land on the sour side — that might be your style')
+  else if (avg > 58) insights.push('You consistently lean bitter — try a slightly finer grind as your baseline')
+
+  // Side-to-side oscillation
+  let oscillations = 0
+  for (let i = 1; i < positions.length - 1; i++) {
+    const prev = positions[i - 1] > 50
+    const curr = positions[i]     > 50
+    const next = positions[i + 1] > 50
+    if (prev !== curr && curr !== next) oscillations++
+  }
+  if (oscillations >= 2) insights.push('Bouncing between sour and bitter — change only one variable at a time')
+
+  // Overall trajectory: compare first half vs second half of recent brews
+  const half      = Math.floor(positions.length / 2)
+  const olderErr  = positions.slice(half).reduce((a, b) => a + Math.abs(b - 50), 0) / (positions.length - half)
+  const recentErr = positions.slice(0, half).reduce((a, b) => a + Math.abs(b - 50), 0) / half
+  if (recentErr < olderErr - 5) insights.push("You're improving — recent brews are closer to balanced than earlier ones")
+
+  return insights
 }
 
 // ── Legacy string helper ──────────────────────────────────────────────────────

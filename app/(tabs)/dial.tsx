@@ -18,8 +18,9 @@ import { RadialTasteDial } from '@/components/RadialTasteDial'
 import { LiveTipBox, SavedSuggestionBox } from '@/components/SuggestionBox'
 import {
   getDialTip, getZone, getCoachingMessage, isOscillating,
-  optimizeNextDial,
+  getBrewWarnings,
 } from '@/lib/algorithms'
+import { SuggestionChange } from '@/lib/types'
 
 export default function DialScreen() {
   const router = useRouter()
@@ -46,6 +47,18 @@ export default function DialScreen() {
     : []
   const trajectory    = beanBrews.map((b) => b.taste_position ?? 50).reverse()
   const oscillating   = isOscillating(trajectory)
+  const warnings      = getBrewWarnings(currentParams, selectedMethod)
+
+  function handleApplyChanges(changes: SuggestionChange[]) {
+    changes.forEach((c) => {
+      const numVal = parseFloat(c.to)   // strips 'g'/'s' suffix automatically
+      if (!isNaN(numVal)) {
+        updateParam(c.param as Parameters<typeof updateParam>[0], numVal)
+      } else {
+        updateParam(c.param as Parameters<typeof updateParam>[0], c.to)
+      }
+    })
+  }
 
   // Espresso ratio badge
   const ratio = isEspresso && currentParams.dose_g > 0
@@ -158,12 +171,21 @@ export default function DialScreen() {
           />
         </View>
 
-        {/* Oscillation warning */}
-        {oscillating && (
-          <View style={styles.warningBanner}>
-            <Text style={styles.warningText}>
-              ⚡ You've been oscillating — try a smaller adjustment this time
-            </Text>
+        {/* Warnings: oscillation + smart param warnings */}
+        {(oscillating || warnings.length > 0) && (
+          <View style={styles.warningsList}>
+            {oscillating && (
+              <View style={styles.warningBanner}>
+                <Text style={styles.warningText}>
+                  ⚡ You've been oscillating — try a smaller adjustment this time
+                </Text>
+              </View>
+            )}
+            {warnings.map((w, i) => (
+              <View key={i} style={styles.warningBanner}>
+                <Text style={styles.warningText}>⚠️ {w}</Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -183,6 +205,7 @@ export default function DialScreen() {
             <SavedSuggestionBox
               suggestion={saving ? null : lastSuggestion}
               loading={saving}
+              onApply={handleApplyChanges}
             />
           </View>
         )}
@@ -276,12 +299,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  warningsList:  { paddingHorizontal: 16, gap: 6, marginTop: 4 },
   warningBanner: {
-    marginHorizontal: 16,
-    backgroundColor:  theme.colors.sourLight,
-    borderRadius:     theme.radius.md,
-    padding:          10,
-    marginTop:        4,
+    backgroundColor: theme.colors.sourLight,
+    borderRadius:    theme.radius.md,
+    padding:         10,
   },
   warningText: { fontSize: 12, color: theme.colors.accentDark, fontWeight: '500' },
 

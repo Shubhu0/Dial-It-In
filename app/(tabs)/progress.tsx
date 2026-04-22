@@ -13,7 +13,7 @@ import { useStore } from '@/lib/store'
 import { Brew, DialInScore } from '@/lib/types'
 import { theme } from '@/constants/theme'
 import { ProgressChart } from '@/components/ProgressChart'
-import { getZoneLabel, getTrend } from '@/lib/algorithms'
+import { getZoneLabel, getTrend, getDialDNA } from '@/lib/algorithms'
 
 const METHOD_LABELS: Record<string, string> = {
   espresso:     'Espresso',
@@ -48,6 +48,8 @@ export default function ProgressScreen() {
   const beanBrews: Brew[] = selectedBean
     ? recentBrews.filter((b) => b.bean_id === selectedBean.id)
     : recentBrews
+
+  const dna = getDialDNA(beanBrews)
 
   const trajectory = beanBrews
     .map((b) => b.taste_position ?? 50)
@@ -161,6 +163,50 @@ export default function ProgressScreen() {
               </Text>
               <Text style={styles.statLabel}>Your target</Text>
             </View>
+          </View>
+        )}
+
+        {/* Brew comparison — last 2 brews side by side */}
+        {beanBrews.length >= 2 && (() => {
+          const curr = beanBrews[0]
+          const prev = beanBrews[1]
+          const rows = [
+            { label: 'Dose',      curr: curr.dose_g        != null ? `${curr.dose_g}g`        : '—', prev: prev.dose_g        != null ? `${prev.dose_g}g`        : '—' },
+            { label: 'Yield',     curr: curr.yield_g       != null ? `${curr.yield_g}g`       : '—', prev: prev.yield_g       != null ? `${prev.yield_g}g`       : '—' },
+            { label: 'Time',      curr: curr.time_s        != null ? `${curr.time_s}s`        : '—', prev: prev.time_s        != null ? `${prev.time_s}s`        : '—' },
+            { label: 'Grind',     curr: curr.grind_setting ?? '—',                                   prev: prev.grind_setting ?? '—'                                   },
+            { label: 'Taste',     curr: getZoneLabel(curr.taste_position ?? 50),                     prev: getZoneLabel(prev.taste_position ?? 50)                     },
+          ]
+          return (
+            <View style={styles.compareCard}>
+              <Text style={styles.compareTitle}>Brew comparison</Text>
+              <View style={styles.compareHeaderRow}>
+                <Text style={[styles.compareLabel, { flex: 1 }]} />
+                <Text style={styles.compareColHead}>Previous</Text>
+                <Text style={[styles.compareColHead, { color: theme.colors.accent }]}>Latest</Text>
+              </View>
+              {rows.map((r) => (
+                <View key={r.label} style={styles.compareRow}>
+                  <Text style={styles.compareLabel}>{r.label}</Text>
+                  <Text style={styles.compareCell}>{r.prev}</Text>
+                  <Text style={[styles.compareCell, styles.compareCellCurrent]}>{r.curr}</Text>
+                </View>
+              ))}
+            </View>
+          )
+        })()}
+
+        {/* Dial DNA — behavioural insights */}
+        {dna.length > 0 && (
+          <View style={styles.dnaCard}>
+            <Text style={styles.dnaTitle}>🧬 Dial DNA</Text>
+            <Text style={styles.dnaSub}>Patterns we've noticed in your brewing</Text>
+            {dna.map((insight, i) => (
+              <View key={i} style={styles.dnaRow}>
+                <View style={styles.dnaDot} />
+                <Text style={styles.dnaText}>{insight}</Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -287,6 +333,34 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 22, fontWeight: '800', color: theme.colors.textPrimary },
   statLabel: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 2, textAlign: 'center' },
+
+  // Brew comparison
+  compareCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius:    theme.radius.xl,
+    padding:         16,
+    ...theme.shadow.sm,
+  },
+  compareTitle:     { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 12 },
+  compareHeaderRow: { flexDirection: 'row', marginBottom: 6 },
+  compareColHead:   { width: 80, fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, textAlign: 'right' },
+  compareRow:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.colors.divider },
+  compareLabel:     { flex: 1, fontSize: 13, color: theme.colors.textSecondary },
+  compareCell:      { width: 80, fontSize: 13, color: theme.colors.textSecondary, textAlign: 'right' },
+  compareCellCurrent: { fontWeight: '700', color: theme.colors.textPrimary },
+
+  // Dial DNA
+  dnaCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius:    theme.radius.xl,
+    padding:         16,
+    ...theme.shadow.sm,
+  },
+  dnaTitle:  { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary },
+  dnaSub:    { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 12, marginTop: 2 },
+  dnaRow:    { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 },
+  dnaDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.accent, marginTop: 6 },
+  dnaText:   { flex: 1, fontSize: 13, color: theme.colors.textPrimary, lineHeight: 19 },
 
   // Section
   sectionTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary, marginTop: 4 },

@@ -6,6 +6,7 @@ import {
   getBestBrew,
   getSmartDefaults,
   optimizeNextDial,
+  buildApplicableChanges,
 } from './algorithms'
 
 interface BrewState {
@@ -143,7 +144,7 @@ export const useStore = create<BrewState>((set, get) => ({
       const prevTaste = recentBrews.find(b => b.bean_id === selectedBean.id)?.taste_position ?? 50
       const suggestion: Suggestion = {
         diagnosis:      opt.note,
-        changes:        [],
+        changes:        buildApplicableChanges(currentParams, currentParams.taste_position, selectedMethod),
         reasoning:      `Based on taste position ${currentParams.taste_position}/100`,
         closerThanLast: Math.abs(currentParams.taste_position - 50) < Math.abs(prevTaste - 50),
       }
@@ -196,7 +197,7 @@ export const useStore = create<BrewState>((set, get) => ({
       const prevTaste = history?.[0]?.taste_position ?? 50
       suggestion = {
         diagnosis:      opt.note,
-        changes:        [],
+        changes:        buildApplicableChanges(currentParams, currentParams.taste_position, selectedMethod),
         reasoning:      `Based on taste position ${currentParams.taste_position}/100`,
         closerThanLast: Math.abs(currentParams.taste_position - 50) <
                         Math.abs(prevTaste - 50),
