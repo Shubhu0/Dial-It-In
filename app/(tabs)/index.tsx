@@ -7,6 +7,7 @@ import {
   FlatList,
   StyleSheet,
   SafeAreaView,
+  Image,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Plus, TrendingUp, Coffee, ChevronRight, LogOut } from 'lucide-react-native'
@@ -66,9 +67,15 @@ export default function HomeScreen() {
       >
         {/* Greeting ──────────────────────────────────────────────────────── */}
         <View style={styles.greetRow}>
-          <View>
-            <Text style={styles.greetSub}>{greeting()}</Text>
-            <Text style={styles.greetName}>Dial It In ☕</Text>
+          <View style={styles.greetLeft}>
+            <Image
+              source={require('../../assets/favicon.png')}
+              style={styles.logoIcon}
+            />
+            <View>
+              <Text style={styles.greetSub}>{greeting()}</Text>
+              <Text style={styles.greetName}>Dial It In</Text>
+            </View>
           </View>
           <View style={styles.greetActions}>
             {userProfile.totalBrews > 0 && (
@@ -199,6 +206,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems:     'center',
     paddingTop:     8,
+  },
+  greetLeft: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           10,
+  },
+  logoIcon: {
+    width:        44,
+    height:       44,
+    borderRadius: 10,
   },
   greetSub:     { fontSize: 14, color: theme.colors.textSecondary },
   greetName:    { fontSize: 26, fontWeight: '800', color: theme.colors.textPrimary },
