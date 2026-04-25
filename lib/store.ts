@@ -129,7 +129,10 @@ export const useStore = create<BrewState>((set, get) => ({
     }))
   },
 
-  setGuestMode: (v) => set({ isGuest: v }),
+  setGuestMode: (v) => set(v
+    ? { isGuest: true }
+    : { isGuest: false, beans: [], recentBrews: [], selectedBean: null }
+  ),
 
   addBeanLocally: (bean) =>
     set((s) => ({ beans: [bean, ...s.beans] })),

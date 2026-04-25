@@ -15,6 +15,7 @@ export const THEME_COLORS: Record<AppTheme, {
   dividerSoft:   string
   accent:        string
   accentDark:    string
+  positive:      string
 }> = {
   light: {
     bgPrimary:     '#F3EBD9',
@@ -27,6 +28,7 @@ export const THEME_COLORS: Record<AppTheme, {
     dividerSoft:   '#E4D9BF',
     accent:        '#A84A1F',
     accentDark:    '#7A3515',
+    positive:      '#4A6B4D',
   },
   sepia: {
     bgPrimary:     '#EDE0C4',
@@ -39,6 +41,7 @@ export const THEME_COLORS: Record<AppTheme, {
     dividerSoft:   '#D9C9A8',
     accent:        '#A84A1F',
     accentDark:    '#7A3515',
+    positive:      '#4A6B4D',
   },
   dark: {
     bgPrimary:     '#1A140E',
@@ -51,6 +54,7 @@ export const THEME_COLORS: Record<AppTheme, {
     dividerSoft:   '#2A2116',
     accent:        '#E07A4A',
     accentDark:    '#F09467',
+    positive:      '#5A8B5E',
   },
 }
 

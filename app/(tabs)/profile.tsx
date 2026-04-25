@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   ScrollView, View, Text, Pressable, TextInput,
   StyleSheet, SafeAreaView, Alert, Modal,
@@ -23,7 +23,6 @@ interface UserPrefs {
   basket:        string
   units:         string
   defaultMethod: string
-  appTheme:      string
   notifications: boolean
 }
 
@@ -34,7 +33,6 @@ const DEFAULT_PREFS: UserPrefs = {
   basket:        'VST 18g',
   units:         'g · °C',
   defaultMethod: 'Espresso',
-  appTheme:      'Light',
   notifications: true,
 }
 
@@ -91,8 +89,9 @@ function PickerModal({
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={m.overlay}>
-        <Pressable style={m.backdrop} onPress={onClose} />
+      {/* Backdrop as separate layer so it never overlaps option rows */}
+      <Pressable style={m.backdrop} onPress={onClose} />
+      <View style={m.pickerContainer}>
         <View style={m.sheet}>
           <View style={m.handle} />
           <View style={m.sheetHeader}>
@@ -119,7 +118,7 @@ function PickerModal({
 export default function ProfileScreen() {
   const router = useRouter()
   const { recentBrews, beans, userProfile, isGuest, setGuestMode } = useStore()
-  const { appTheme, setAppTheme } = useAppTheme()
+  const { appTheme, setAppTheme, colors } = useAppTheme()
 
   const [prefs,     setPrefs]     = useState<UserPrefs>(DEFAULT_PREFS)
   const [userName,  setUserName]  = useState('Maya Osei')
@@ -128,6 +127,41 @@ export default function ProfileScreen() {
   // Modal state
   const [editingField, setEditingField] = useState<{ key: keyof UserPrefs; label: string; placeholder: string } | null>(null)
   const [pickerField,  setPickerField]  = useState<{ key: keyof UserPrefs; label: string; options: string[] } | null>(null)
+
+  // Dynamic styles — recreated only when theme colors change
+  const d = useMemo(() => StyleSheet.create({
+    safe:        { flex: 1, backgroundColor: colors.bgPrimary },
+    content:     { paddingHorizontal: 22, paddingTop: 16, gap: 20 },
+    title:       { fontFamily: fonts.serif, fontSize: 28, color: colors.textPrimary, letterSpacing: -0.5 },
+    avatarCard:  { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.bgSecondary, padding: 16, borderWidth: 1, borderColor: colors.divider },
+    avatar:      { width: 62, height: 62, borderRadius: 31, backgroundColor: colors.textPrimary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    avatarInitial: { fontFamily: fonts.serifItalic, fontSize: 28, color: colors.bgPrimary },
+    avatarName:  { fontFamily: fonts.serif, fontSize: 22, color: colors.textPrimary, letterSpacing: -0.3 },
+    avatarSub:   { fontFamily: fonts.body, fontSize: 12, color: colors.textSecondary },
+    avatarEmail: { fontFamily: fonts.mono, fontSize: 10, color: colors.textTertiary, marginTop: 2 },
+    sectionTitle:{ fontFamily: fonts.mono, fontSize: 10, color: colors.textTertiary, letterSpacing: 0.2, marginBottom: 4 },
+    rowList:     { backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.divider },
+    rowItem:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13 },
+    rowBorder:   { borderBottomWidth: 1, borderBottomColor: colors.divider },
+    rowLabel:    { fontFamily: fonts.body, fontSize: 14, color: colors.textSecondary },
+    rowRight:    { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    rowValue:    { fontFamily: fonts.body, fontSize: 14, color: colors.textPrimary },
+    rowValueAccent: { fontFamily: fonts.body, fontSize: 14, color: colors.accentDark },
+    themeChips:  { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+    themeChip:   { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: colors.divider, backgroundColor: colors.bgPrimary },
+    themeChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    themeChipText: { fontFamily: fonts.mono, fontSize: 10, color: colors.textSecondary, letterSpacing: 0.1 },
+    themeChipTextActive: { color: colors.bgPrimary },
+    togglePill:  { width: 44, height: 26, borderRadius: 13, backgroundColor: colors.divider, padding: 2, justifyContent: 'center' },
+    togglePillOn:{ backgroundColor: colors.positive },
+    exportCard:  { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.bgSecondary, padding: 16, borderWidth: 1, borderColor: colors.divider },
+    exportTitle: { fontFamily: fonts.body, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+    exportSub:   { fontFamily: fonts.mono, fontSize: 10, color: colors.textTertiary, letterSpacing: 0.1 },
+    exportBtn:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, backgroundColor: colors.textPrimary },
+    exportBtnText: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.bgPrimary, letterSpacing: 0.1 },
+    signOutBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, borderWidth: 1, borderColor: colors.divider, backgroundColor: colors.bgSecondary },
+    versionText: { fontFamily: fonts.mono, fontSize: 10, color: colors.textTertiary, textAlign: 'center', letterSpacing: 0.2 },
+  }), [colors])
 
   // Load saved prefs + user info
   useEffect(() => {
@@ -156,23 +190,22 @@ export default function ProfileScreen() {
     savePrefs({ ...prefs, [key]: value })
   }
 
-  // ── Sign out ────────────────────────────────────────────────────────────────
+  // ── Sign out / exit guest ───────────────────────────────────────────────────
   function handleSignOut() {
-    Alert.alert(
-      isGuest ? 'Exit guest mode' : 'Sign out',
-      isGuest ? 'Your local data will be cleared.' : 'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: isGuest ? 'Exit' : 'Sign out',
-          style: 'destructive',
-          onPress: () => {
-            if (isGuest) setGuestMode(false)
-            else supabase.auth.signOut()
-          },
-        },
-      ],
-    )
+    if (isGuest) {
+      // Skip Alert for guest exit — Alert.alert multi-button callbacks are unreliable on web
+      setGuestMode(false)
+      router.replace('/auth')
+      return
+    }
+    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: () => supabase.auth.signOut(),
+      },
+    ])
   }
 
   // ── Export ──────────────────────────────────────────────────────────────────
@@ -215,11 +248,6 @@ export default function ProfileScreen() {
   function handleNotifications() {
     const next = !prefs.notifications
     updatePref('notifications', next)
-    Alert.alert(
-      next ? 'Notifications enabled' : 'Notifications disabled',
-      next ? 'You\'ll get nudges and brew reminders.' : 'You won\'t receive any notifications.',
-      [{ text: 'OK' }],
-    )
   }
 
   const kitItems = [
@@ -234,52 +262,51 @@ export default function ProfileScreen() {
     { key: 'defaultMethod' as const, label: 'Default method', options: ['Espresso', 'Pour Over', 'AeroPress', 'French Press'] },
   ]
 
-  // Theme is managed via ThemeContext (not UserPrefs) so it applies live
   const themeOptions: { value: AppTheme; label: string }[] = [
-    { value: 'light', label: 'Light (Paper)' },
-    { value: 'sepia', label: 'Sepia'         },
-    { value: 'dark',  label: 'Dark'          },
+    { value: 'light', label: 'Light'  },
+    { value: 'sepia', label: 'Sepia'  },
+    { value: 'dark',  label: 'Dark'   },
   ]
 
   return (
-    <SafeAreaView style={s.safe}>
-      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={d.safe}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={d.content} showsVerticalScrollIndicator={false}>
 
         {/* Title */}
-        <Text style={s.title}>You</Text>
+        <Text style={d.title}>You</Text>
 
         {/* Avatar card */}
-        <View style={s.avatarCard}>
-          <View style={s.avatar}>
-            <Text style={s.avatarInitial}>
+        <View style={d.avatarCard}>
+          <View style={d.avatar}>
+            <Text style={d.avatarInitial}>
               {userName.charAt(0).toUpperCase()}
             </Text>
           </View>
-          <View style={s.avatarInfo}>
-            <Text style={s.avatarName}>{userName}</Text>
-            <Text style={s.avatarSub}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={d.avatarName}>{userName}</Text>
+            <Text style={d.avatarSub}>
               {isGuest
                 ? 'Guest mode · data stored locally'
                 : `${userProfile.totalBrews} shots · ${beans.length} bag${beans.length !== 1 ? 's' : ''}`}
             </Text>
-            {userEmail ? <Text style={s.avatarEmail}>{userEmail}</Text> : null}
+            {userEmail ? <Text style={d.avatarEmail}>{userEmail}</Text> : null}
           </View>
         </View>
 
         {/* ── Your kit ─────────────────────────────────────────────── */}
         <View>
-          <Text style={s.sectionTitle}>Your kit</Text>
-          <View style={s.rowList}>
+          <Text style={d.sectionTitle}>YOUR KIT</Text>
+          <View style={d.rowList}>
             {kitItems.map((item, i) => (
               <Pressable
                 key={item.key}
-                style={[s.rowItem, i < kitItems.length - 1 && s.rowBorder]}
+                style={[d.rowItem, i < kitItems.length - 1 && d.rowBorder]}
                 onPress={() => setEditingField(item)}
               >
-                <Text style={s.rowLabel}>{item.label}</Text>
-                <View style={s.rowRight}>
-                  <Text style={s.rowValue}>{prefs[item.key] as string}</Text>
-                  <ChevronRight size={14} stroke={theme.colors.textTertiary} strokeWidth={1.8} />
+                <Text style={d.rowLabel}>{item.label}</Text>
+                <View style={d.rowRight}>
+                  <Text style={d.rowValue}>{prefs[item.key] as string}</Text>
+                  <ChevronRight size={14} stroke={colors.textTertiary} strokeWidth={1.8} />
                 </View>
               </Pressable>
             ))}
@@ -288,34 +315,36 @@ export default function ProfileScreen() {
 
         {/* ── Preferences ──────────────────────────────────────────── */}
         <View>
-          <Text style={s.sectionTitle}>Preferences</Text>
-          <View style={s.rowList}>
+          <Text style={d.sectionTitle}>PREFERENCES</Text>
+          <View style={d.rowList}>
             {prefItems.map((pref, i) => (
               <Pressable
                 key={pref.key}
-                style={[s.rowItem, s.rowBorder]}
+                style={[d.rowItem, d.rowBorder]}
                 onPress={() => setPickerField(pref)}
               >
-                <Text style={s.rowLabel}>{pref.label}</Text>
-                <View style={s.rowRight}>
-                  <Text style={s.rowValueAccent}>{prefs[pref.key] as string}</Text>
-                  <ChevronRight size={14} stroke={theme.colors.textTertiary} strokeWidth={1.8} />
+                <Text style={d.rowLabel}>{pref.label}</Text>
+                <View style={d.rowRight}>
+                  <Text style={d.rowValueAccent}>{prefs[pref.key] as string}</Text>
+                  <ChevronRight size={14} stroke={colors.textTertiary} strokeWidth={1.8} />
                 </View>
               </Pressable>
             ))}
 
-            {/* Theme — inline picker row, wired to ThemeContext */}
-            <View style={[s.rowItem, s.rowBorder, { flexDirection: 'column', alignItems: 'flex-start', gap: 10 }]}>
-              <Text style={s.rowLabel}>Theme</Text>
-              <View style={s.themeChips}>
+            {/* Theme — inline chips wired directly to ThemeContext */}
+            <View style={[d.rowItem, d.rowBorder, { flexDirection: 'column', alignItems: 'flex-start', gap: 10 }]}>
+              <Text style={d.rowLabel}>Theme</Text>
+              <View style={d.themeChips}>
                 {themeOptions.map(opt => (
                   <Pressable
                     key={opt.value}
-                    style={[s.themeChip, appTheme === opt.value && s.themeChipActive]}
+                    style={[d.themeChip, appTheme === opt.value && d.themeChipActive]}
                     onPress={() => setAppTheme(opt.value)}
                   >
-                    {appTheme === opt.value && <Check size={11} stroke={theme.colors.bgPrimary} strokeWidth={2.5} />}
-                    <Text style={[s.themeChipText, appTheme === opt.value && s.themeChipTextActive]}>
+                    {appTheme === opt.value && (
+                      <Check size={11} stroke={colors.bgPrimary} strokeWidth={2.5} />
+                    )}
+                    <Text style={[d.themeChipText, appTheme === opt.value && d.themeChipTextActive]}>
                       {opt.label}
                     </Text>
                   </Pressable>
@@ -324,11 +353,14 @@ export default function ProfileScreen() {
             </View>
 
             {/* Notifications toggle */}
-            <Pressable style={s.rowItem} onPress={handleNotifications}>
-              <Text style={s.rowLabel}>Notifications</Text>
-              <View style={s.rowRight}>
-                <View style={[s.togglePill, prefs.notifications && s.togglePillOn]}>
-                  <View style={[s.toggleThumb, prefs.notifications && s.toggleThumbOn]} />
+            <Pressable style={d.rowItem} onPress={handleNotifications}>
+              <Text style={d.rowLabel}>Notifications</Text>
+              <View style={d.rowRight}>
+                <View style={[d.togglePill, prefs.notifications && d.togglePillOn]}>
+                  <View style={[
+                    { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFF' },
+                    prefs.notifications && { alignSelf: 'flex-end' },
+                  ]} />
                 </View>
               </View>
             </Pressable>
@@ -336,28 +368,28 @@ export default function ProfileScreen() {
         </View>
 
         {/* ── Export my data ───────────────────────────────────────── */}
-        <View style={s.exportCard}>
-          <View style={s.exportLeft}>
-            <Text style={s.exportTitle}>Export my data</Text>
-            <Text style={s.exportSub}>
+        <View style={d.exportCard}>
+          <View style={{ flex: 1, gap: 3 }}>
+            <Text style={d.exportTitle}>Export my data</Text>
+            <Text style={d.exportSub}>
               CSV or JSON · {userProfile.totalBrews} shot{userProfile.totalBrews !== 1 ? 's' : ''}
             </Text>
           </View>
-          <Pressable style={s.exportBtn} onPress={handleExport}>
-            <Download size={14} stroke="#FFF" strokeWidth={2} />
-            <Text style={s.exportBtnText}>Export</Text>
+          <Pressable style={d.exportBtn} onPress={handleExport}>
+            <Download size={14} stroke={colors.bgPrimary} strokeWidth={2} />
+            <Text style={d.exportBtnText}>Export</Text>
           </Pressable>
         </View>
 
-        {/* ── Sign out ─────────────────────────────────────────────── */}
-        <Pressable style={s.signOutBtn} onPress={handleSignOut}>
+        {/* ── Sign out / Exit guest ─────────────────────────────────── */}
+        <Pressable style={d.signOutBtn} onPress={handleSignOut}>
           <LogOut size={16} stroke={theme.colors.error} strokeWidth={1.8} />
-          <Text style={s.signOutText}>
+          <Text style={[d.versionText, { color: theme.colors.error, fontSize: 12, letterSpacing: 0 }]}>
             {isGuest ? 'Exit guest mode' : 'Sign out'}
           </Text>
         </Pressable>
 
-        <Text style={s.versionText}>Dial It In · v2.4.0</Text>
+        <Text style={d.versionText}>Dial It In · v2.4.0</Text>
 
         <View style={{ height: 120 }} />
       </ScrollView>
@@ -389,91 +421,19 @@ export default function ProfileScreen() {
   )
 }
 
-// ── styles ────────────────────────────────────────────────────────────────────
+// ── Static styles (layout / non-color) ───────────────────────────────────────
 const s = StyleSheet.create({
-  safe:    { flex: 1, backgroundColor: theme.colors.bgPrimary },
-  scroll:  { flex: 1 },
-  content: { paddingHorizontal: 22, paddingTop: 16, gap: 20 },
-
-  // Direction A: Fraunces serif title
-  title: { fontFamily: fonts.serif, fontSize: 28, color: theme.colors.textPrimary, letterSpacing: -0.5 },
-
-  // Avatar card — flat, rule border (Direction A: no rounded xl, no shadow)
-  avatarCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: theme.colors.bgSecondary,
-    padding: 16, borderWidth: 1, borderColor: theme.colors.divider,
-  },
-  avatar: {
-    width: 62, height: 62, borderRadius: 31,   // 31px circle (spec)
-    backgroundColor: theme.colors.textPrimary,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  avatarInitial: { fontFamily: fonts.serifItalic, fontSize: 28, color: theme.colors.bgPrimary },
-  avatarInfo:    { flex: 1, gap: 2 },
-  avatarName:    { fontFamily: fonts.serif, fontSize: 22, color: theme.colors.textPrimary, letterSpacing: -0.3 },
-  avatarSub:     { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textSecondary },
-  avatarEmail:   { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
-
-  // Section header — mono caps (Direction A style)
-  sectionTitle: { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, letterSpacing: 0.2, marginBottom: 4 },
-
-  // Row list — flat, 1px rule borders (no rounded corners)
-  rowList: {
-    backgroundColor: theme.colors.bgSecondary,
-    borderWidth: 1, borderColor: theme.colors.divider,
-  },
-  rowItem:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13 },
-  rowBorder:     { borderBottomWidth: 1, borderBottomColor: theme.colors.divider },
-  rowLabel:      { fontFamily: fonts.body, fontSize: 14, color: theme.colors.textSecondary },
-  rowRight:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowValue:      { fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
-  rowValueAccent:{ fontFamily: fonts.body, fontSize: 14, color: theme.colors.accentDark },
-
-  // Theme chips
-  themeChips:        { flexDirection: 'row', gap: 8 },
-  themeChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.divider, backgroundColor: theme.colors.bgPrimary },
-  themeChipActive:   { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
-  themeChipText:     { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textSecondary, letterSpacing: 0.1 },
-  themeChipTextActive: { color: theme.colors.bgPrimary, fontWeight: '600' },
-
-  // Toggle switch
-  togglePill:    { width: 44, height: 26, borderRadius: 13, backgroundColor: theme.colors.divider, padding: 2, justifyContent: 'center' },
-  togglePillOn:  { backgroundColor: theme.colors.positive },
-  toggleThumb:   { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFF', ...theme.shadow.xs },
-  toggleThumbOn: { alignSelf: 'flex-end' },
-
-  // Export card — flat, Direction A
-  exportCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: theme.colors.bgSecondary,
-    padding: 16, borderWidth: 1, borderColor: theme.colors.divider,
-  },
-  exportLeft:    { flex: 1, gap: 3 },
-  exportTitle:   { fontFamily: fonts.body, fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary },
-  exportSub:     { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, letterSpacing: 0.1 },
-  exportBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 9,
-    backgroundColor: theme.colors.textPrimary,   // flat ink button (Direction A)
-  },
-  exportBtnText: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: theme.colors.bgPrimary, letterSpacing: 0.1 },
-
-  // Sign out — flat, rule border
-  signOutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, height: 46,
-    borderWidth: 1, borderColor: theme.colors.divider,
-    backgroundColor: theme.colors.bgSecondary,
-  },
-  signOutText: { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.error, letterSpacing: 0.1 },
-  versionText: { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, textAlign: 'center', letterSpacing: 0.2 },
+  avatarInfo: { flex: 1, gap: 2 },
 })
 
 // ── Modal styles ──────────────────────────────────────────────────────────────
 const m = StyleSheet.create({
   overlay:  { flex: 1, justifyContent: 'flex-end' },
+  // Backdrop is absolute and rendered as a SIBLING before the sheet container,
+  // so the sheet (rendered after) sits on top and receives all touches.
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.40)' },
+  // pickerContainer lets the sheet float at the bottom without the backdrop interfering
+  pickerContainer: { justifyContent: 'flex-end', flex: 1 },
   sheet: {
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
@@ -494,7 +454,6 @@ const m = StyleSheet.create({
   cancelText: { fontSize: 14, fontWeight: '500', color: theme.colors.textSecondary },
   saveBtn:    { flex: 2, height: 48, borderRadius: theme.radius.xl, backgroundColor: theme.colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   saveText:   { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: '#FFF' },
-
   optRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 4 },
   optBorder:     { borderBottomWidth: 1, borderBottomColor: theme.colors.divider },
   optText:       { fontSize: 15, color: theme.colors.textSecondary },
