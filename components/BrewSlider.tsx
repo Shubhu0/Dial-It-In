@@ -7,6 +7,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import Slider from '@react-native-community/slider'
 import { theme } from '@/constants/theme'
+import { fonts } from '@/constants/fonts'
 
 interface Props {
   label:       string
@@ -96,12 +97,9 @@ export function BrewSlider({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.lg,
-    paddingHorizontal: 16,
-    paddingTop:      14,
-    paddingBottom:   6,
-    ...theme.shadow.xs,
+    paddingHorizontal: 0,
+    paddingTop:        2,
+    paddingBottom:     0,
   },
   topRow: {
     flexDirection:  'row',
@@ -109,17 +107,14 @@ const styles = StyleSheet.create({
     alignItems:     'center',
     marginBottom:   8,
   },
-  paramLabel:  {
-    fontSize:      10,
-    fontWeight:    '700',
+  paramLabel: {
+    fontFamily:    fonts.mono,
+    fontSize:      11,
+    fontWeight:    '600',
     color:         theme.colors.textSecondary,
-    letterSpacing: 1.2,
+    letterSpacing: 0.5,
   },
-  description: {
-    fontSize: 11,
-    color:    theme.colors.textTertiary,
-    marginTop: 2,
-  },
+  description: { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
   valueGroup:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
   badge: {
     backgroundColor: theme.colors.accentMuted,
@@ -127,9 +122,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical:   3,
   },
-  badgeText:  { fontSize: 11, color: theme.colors.accentDark, fontWeight: '600' },
-  valueText:  { fontSize: 22, fontWeight: '800', color: theme.colors.textPrimary },
-  unitText:   { fontSize: 14, fontWeight: '500', color: theme.colors.textSecondary },
+  badgeText: { fontFamily: fonts.mono, fontSize: 11, color: theme.colors.accentDark, fontWeight: '600' },
+  valueText: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: theme.colors.textPrimary },
+  unitText:  { fontFamily: fonts.mono, fontSize: 13, fontWeight: '400', color: theme.colors.textSecondary },
 
   trackBg: {
     height:          4,

@@ -1,27 +1,40 @@
 import React, { useState } from 'react'
 import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  SafeAreaView,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, Text, TextInput, Pressable, StyleSheet,
+  SafeAreaView, ActivityIndicator, KeyboardAvoidingView,
+  Platform, ScrollView,
 } from 'react-native'
-import { useRouter } from 'expo-router'
 import { supabase } from '@/lib/supabase'
 import { theme } from '@/constants/theme'
 import { useStore } from '@/lib/store'
+import { fonts } from '@/constants/fonts'
+import Svg, { Circle, Line } from 'react-native-svg'
 
 type Mode = 'signin' | 'signup'
 
-export default function AuthScreen() {
-  const router        = useRouter()
-  const setGuestMode  = useStore(s => s.setGuestMode)
+const SAFE_MESSAGES: Record<string, string> = {
+  'Invalid login credentials':                'Incorrect email or password.',
+  'Email not confirmed':                      'Please confirm your email before signing in.',
+  'User already registered':                  'An account with this email already exists.',
+  'Password should be at least 6 characters': 'Password must be at least 8 characters.',
+}
 
+// DialMark — concentric rings + center dot + upward tick (Direction A: ink color)
+function DialMarkSvg({ size = 52 }: { size?: number }) {
+  const c = size / 2, r = c - 1
+  return (
+    <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <Circle cx={c} cy={c} r={r}         fill="none" stroke={theme.colors.textPrimary} strokeWidth={1.4} />
+      <Circle cx={c} cy={c} r={r * 0.62}  fill="none" stroke={theme.colors.textPrimary} strokeWidth={1.0} opacity={0.55} />
+      <Circle cx={c} cy={c} r={r * 0.18}  fill={theme.colors.textPrimary} />
+      <Line x1={c} y1={2} x2={c} y2={c * 0.42}
+        stroke={theme.colors.accent} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  )
+}
+
+export default function AuthScreen() {
+  const setGuestMode = useStore(s => s.setGuestMode)
   const [mode, setMode]         = useState<Mode>('signin')
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
@@ -30,280 +43,197 @@ export default function AuthScreen() {
   const [success, setSuccess]   = useState<string | null>(null)
 
   async function handleSubmit() {
-    setError(null)
-    setSuccess(null)
-
-    if (!email.trim() || !password.trim()) {
-      setError('Please enter your email and password.')
-      return
-    }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.')
-      return
-    }
-
+    setError(null); setSuccess(null)
+    if (!email.trim() || !password.trim()) { setError('Please enter your email and password.'); return }
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
     setLoading(true)
     try {
       if (mode === 'signup') {
         const { data, error: err } = await supabase.auth.signUp({ email, password })
         if (err) throw err
-        if (data.session) {
-          // Email confirmation is disabled — user is signed in immediately.
-          // _layout.tsx onAuthStateChange will redirect to (tabs).
-        } else {
-          // Email confirmation is enabled — ask them to check their inbox.
-          setSuccess('Account created! Check your email to confirm, then sign in.')
-          setMode('signin')
-        }
+        if (!data.session) { setSuccess('Account created! Check your email to confirm, then sign in.'); setMode('signin') }
       } else {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password })
         if (err) throw err
-        // _layout.tsx onAuthStateChange will redirect to (tabs)
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function handleGuestSignIn() {
-    setGuestMode(true)
-    // _layout.tsx route guard detects isGuest=true and redirects to (tabs)
+      setError(SAFE_MESSAGES[e?.message] ?? 'Something went wrong. Please try again.')
+    } finally { setLoading(false) }
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+    <SafeAreaView style={s.safe}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+
+          {/* Stamp corners */}
+          <View style={s.stampRow}>
+            <Text style={s.stamp}>Vol. 01</Text>
+            <Text style={s.stamp}>N°42</Text>
+          </View>
+
           {/* Hero */}
-          <View style={styles.hero}>
-            <Text style={styles.heroIcon}>☕</Text>
-            <Text style={styles.heroTitle}>Dial It In</Text>
-            <Text style={styles.heroSub}>
-              Track, learn, and perfect your brew
+          <View style={s.hero}>
+            <DialMarkSvg size={52} />
+            <Text style={s.heroTitle}>
+              Dial <Text style={s.heroItalic}>it</Text> In
+            </Text>
+            {/* Hairline divider */}
+            <View style={s.hairline} />
+            <Text style={s.heroTagline}>
+              "A fieldbook for the shots that matter."
             </Text>
           </View>
 
-          {/* Card */}
-          <View style={styles.card}>
-            {/* Mode toggle */}
-            <View style={styles.modeRow}>
+          {/* Mode toggle */}
+          <View style={s.modeRow}>
+            {(['signin', 'signup'] as Mode[]).map(m => (
               <Pressable
-                style={[styles.modeBtn, mode === 'signin' && styles.modeBtnActive]}
-                onPress={() => { setMode('signin'); setError(null); setSuccess(null) }}
+                key={m}
+                style={[s.modeBtn, mode === m && s.modeBtnActive]}
+                onPress={() => { setMode(m); setError(null); setSuccess(null) }}
               >
-                <Text style={[styles.modeBtnText, mode === 'signin' && styles.modeBtnTextActive]}>
-                  Sign in
+                <Text style={[s.modeBtnText, mode === m && s.modeBtnTextActive]}>
+                  {m === 'signin' ? 'Sign in' : 'Create account'}
                 </Text>
               </Pressable>
-              <Pressable
-                style={[styles.modeBtn, mode === 'signup' && styles.modeBtnActive]}
-                onPress={() => { setMode('signup'); setError(null); setSuccess(null) }}
-              >
-                <Text style={[styles.modeBtnText, mode === 'signup' && styles.modeBtnTextActive]}>
-                  Create account
-                </Text>
-              </Pressable>
-            </View>
-
-            {/* Fields */}
-            <View style={styles.fields}>
-              <View style={styles.fieldGroup}>
-                <Text style={styles.fieldLabel}>EMAIL</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="you@example.com"
-                  placeholderTextColor={theme.colors.textTertiary}
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  autoComplete="email"
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.fieldLabel}>PASSWORD</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder={mode === 'signup' ? 'At least 6 characters' : '••••••••'}
-                  placeholderTextColor={theme.colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                />
-              </View>
-            </View>
-
-            {/* Feedback */}
-            {error   && <Text style={styles.errorText}>{error}</Text>}
-            {success && <Text style={styles.successText}>{success}</Text>}
-
-            {/* Primary button */}
-            <Pressable
-              style={[styles.primaryBtn, loading && styles.primaryBtnLoading]}
-              onPress={handleSubmit}
-              disabled={loading}
-            >
-              {loading
-                ? <ActivityIndicator color="#FFF" />
-                : <Text style={styles.primaryBtnText}>
-                    {mode === 'signin' ? 'Sign in' : 'Create account'}
-                  </Text>
-              }
-            </Pressable>
-
-            {/* Divider */}
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Guest button */}
-            <Pressable
-              style={styles.guestBtn}
-              onPress={handleGuestSignIn}
-              disabled={loading}
-            >
-              <Text style={styles.guestBtnText}>Continue as guest</Text>
-            </Pressable>
-
-            <Text style={styles.guestNote}>
-              Guest accounts are tied to this device. Create an account to sync across devices.
-            </Text>
+            ))}
           </View>
+
+          {/* Fields — underline only (Direction A) */}
+          <View style={s.fields}>
+            <View style={s.fieldGroup}>
+              <Text style={s.fieldLabel}>EMAIL</Text>
+              <TextInput
+                style={s.input}
+                placeholder="you@example.com"
+                placeholderTextColor={theme.colors.textTertiary}
+                value={email} onChangeText={setEmail}
+                autoCapitalize="none" keyboardType="email-address" autoComplete="email"
+              />
+            </View>
+            <View style={s.fieldGroup}>
+              <Text style={s.fieldLabel}>PASSWORD</Text>
+              <TextInput
+                style={s.input}
+                placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'}
+                placeholderTextColor={theme.colors.textTertiary}
+                value={password} onChangeText={setPassword}
+                secureTextEntry autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              />
+            </View>
+          </View>
+
+          {error   && <Text style={s.errorText}>{error}</Text>}
+          {success && <Text style={s.successText}>{success}</Text>}
+
+          {/* Primary CTA — ink bg, mono caps */}
+          <Pressable
+            style={[s.primaryBtn, loading && { opacity: 0.7 }]}
+            onPress={handleSubmit} disabled={loading}
+          >
+            {loading
+              ? <ActivityIndicator color={theme.colors.bgPrimary} />
+              : <Text style={s.primaryBtnText}>
+                  {mode === 'signin' ? 'OPEN THE FIELDBOOK →' : 'CREATE ACCOUNT →'}
+                </Text>}
+          </Pressable>
+
+          {/* Divider */}
+          <View style={s.dividerRow}>
+            <View style={s.dividerLine} />
+            <Text style={s.dividerText}>OR</Text>
+            <View style={s.dividerLine} />
+          </View>
+
+          {/* Guest */}
+          <Pressable style={s.guestBtn} onPress={() => setGuestMode(true)} disabled={loading}>
+            <Text style={s.guestBtnText}>Continue as guest</Text>
+          </Pressable>
+
+          <Text style={s.footer}>
+            {mode === 'signin' ? 'New around here? ' : 'Already have a fieldbook? '}
+            <Text style={s.footerLink} onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null) }}>
+              {mode === 'signin' ? 'Start your first page' : 'Sign in'}
+            </Text>
+          </Text>
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: theme.colors.bgPrimary },
-  scroll: {
-    flexGrow:        1,
-    justifyContent:  'center',
-    paddingHorizontal: 24,
-    paddingVertical:   32,
-  },
+  scroll: { flexGrow: 1, paddingHorizontal: 28, paddingVertical: 40, gap: 24 },
+
+  // Stamp corners (mono caps, corners)
+  stampRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  stamp:    { fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.25 },
 
   // Hero
-  hero:      { alignItems: 'center', marginBottom: 32 },
-  heroIcon:  { fontSize: 52, marginBottom: 10 },
-  heroTitle: { fontSize: 32, fontWeight: '800', color: theme.colors.textPrimary, letterSpacing: -0.5 },
-  heroSub:   { fontSize: 15, color: theme.colors.textSecondary, marginTop: 4 },
+  hero:       { alignItems: 'center', gap: 14 },
+  heroTitle: {
+    fontFamily:    fonts.serif,
+    fontSize:      56,
+    lineHeight:    54,
+    letterSpacing: -1.5,
+    color:         theme.colors.textPrimary,
+    fontWeight:    '400',
+    marginTop:     10,
+  },
+  heroItalic: { fontFamily: fonts.serifItalic, color: theme.colors.accent },
+  hairline:   { width: 88, height: 1, backgroundColor: theme.colors.divider },
+  heroTagline:{ fontFamily: fonts.bodyItalic, fontSize: 16, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 22 },
 
-  // Card
-  card: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xxl,
-    padding:         24,
-    ...theme.shadow.md,
-  },
+  // Mode toggle — flat, rule border
+  modeRow: { flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.divider },
+  modeBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.bgPrimary },
+  modeBtnActive:     { backgroundColor: theme.colors.textPrimary },
+  modeBtnText:       { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textSecondary, letterSpacing: 0.1 },
+  modeBtnTextActive: { color: theme.colors.bgPrimary },
 
-  // Mode toggle
-  modeRow: {
-    flexDirection:   'row',
-    backgroundColor: theme.colors.bgPrimary,
-    borderRadius:    theme.radius.lg,
-    padding:         4,
-    marginBottom:    24,
-  },
-  modeBtn: {
-    flex:            1,
-    paddingVertical: 9,
-    borderRadius:    theme.radius.md,
-    alignItems:      'center',
-  },
-  modeBtnActive: {
-    backgroundColor: theme.colors.card,
-    ...theme.shadow.xs,
-  },
-  modeBtnText:       { fontSize: 14, fontWeight: '500', color: theme.colors.textSecondary },
-  modeBtnTextActive: { color: theme.colors.textPrimary, fontWeight: '700' },
-
-  // Fields
-  fields:     { gap: 14, marginBottom: 16 },
+  // Fields — underline only (Direction A spec)
+  fields:     { gap: 20 },
   fieldGroup: { gap: 6 },
-  fieldLabel: {
-    fontSize:      10,
-    fontWeight:    '700',
-    color:         theme.colors.textSecondary,
-    letterSpacing: 1.2,
-  },
+  fieldLabel: { fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.18 },
   input: {
-    backgroundColor: theme.colors.bgPrimary,
-    borderRadius:    theme.radius.md,
-    paddingHorizontal: 14,
-    paddingVertical:   12,
-    fontSize:        15,
-    color:           theme.colors.textPrimary,
-    borderWidth:     1.5,
-    borderColor:     theme.colors.divider,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.textPrimary,
+    paddingBottom:     6,
+    fontSize:          16,
+    fontFamily:        fonts.body,
+    color:             theme.colors.textPrimary,
+    backgroundColor:   'transparent',
   },
 
-  // Feedback
-  errorText:   {
-    fontSize:     13,
-    color:        theme.colors.error,
-    marginBottom: 12,
-    lineHeight:   18,
-  },
-  successText: {
-    fontSize:        13,
-    color:           theme.colors.balanced,
-    marginBottom:    12,
-    lineHeight:      18,
-    fontWeight:      '500',
-  },
+  errorText:   { fontFamily: fonts.mono, fontSize: 11, color: theme.colors.error,    lineHeight: 16 },
+  successText: { fontFamily: fonts.mono, fontSize: 11, color: theme.colors.balanced, lineHeight: 16 },
 
-  // Primary button
+  // Primary button — ink bg, mono caps, radius 2 (Direction A)
   primaryBtn: {
-    height:          52,
-    borderRadius:    theme.radius.xl,
-    backgroundColor: theme.colors.accent,
-    alignItems:      'center',
-    justifyContent:  'center',
-    ...theme.shadow.sm,
+    backgroundColor: theme.colors.textPrimary,
+    paddingVertical:   15,
+    borderRadius:      2,
+    alignItems:        'center',
+    justifyContent:    'center',
   },
-  primaryBtnLoading: { backgroundColor: theme.colors.accentDark },
-  primaryBtnText:    { fontSize: 16, fontWeight: '700', color: '#FFF' },
+  primaryBtnText: { fontFamily: fonts.mono, fontSize: 11, fontWeight: '600', color: theme.colors.bgPrimary, letterSpacing: 0.18 },
 
   // Divider
-  dividerRow: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            10,
-    marginVertical: 16,
-  },
+  dividerRow:  { flexDirection: 'row', alignItems: 'center', gap: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: theme.colors.divider },
-  dividerText: { fontSize: 12, color: theme.colors.textTertiary },
+  dividerText: { fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.2 },
 
-  // Guest
+  // Guest button — outline, flat
   guestBtn: {
-    height:          48,
-    borderRadius:    theme.radius.xl,
-    borderWidth:     1.5,
-    borderColor:     theme.colors.divider,
-    alignItems:      'center',
-    justifyContent:  'center',
+    borderWidth: 1, borderColor: theme.colors.divider,
+    paddingVertical: 13, borderRadius: 2,
+    alignItems: 'center', justifyContent: 'center',
   },
-  guestBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.textSecondary },
-  guestNote: {
-    fontSize:    11,
-    color:       theme.colors.textTertiary,
-    textAlign:   'center',
-    marginTop:   12,
-    lineHeight:  16,
-  },
+  guestBtnText: { fontFamily: fonts.body, fontSize: 14, color: theme.colors.textSecondary },
+
+  footer:     { fontFamily: fonts.body, fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+  footerLink: { color: theme.colors.accentDark, textDecorationLine: 'underline' as const },
 })

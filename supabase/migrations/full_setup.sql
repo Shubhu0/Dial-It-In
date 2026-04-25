@@ -125,6 +125,30 @@ create policy "brews_delete" on public.brews
   for delete using (auth.uid() = user_id);
 
 
+-- ── SUGGESTION RATE LIMITS ───────────────────────────────────────────────────
+create table if not exists public.suggestion_rate_limits (
+  user_id uuid primary key references auth.users on delete cascade,
+  last_at timestamptz not null default now()
+);
+
+alter table public.suggestion_rate_limits enable row level security;
+
+drop policy if exists "rate_limits_select" on public.suggestion_rate_limits;
+drop policy if exists "rate_limits_upsert" on public.suggestion_rate_limits;
+drop policy if exists "rate_limits_update" on public.suggestion_rate_limits;
+
+create policy "rate_limits_select" on public.suggestion_rate_limits
+  for select using (auth.uid() = user_id);
+
+create policy "rate_limits_upsert" on public.suggestion_rate_limits
+  for insert with check (auth.uid() = user_id);
+
+create policy "rate_limits_update" on public.suggestion_rate_limits
+  for update
+  using     (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+
 -- ── BEAN IMAGES (Supabase Storage) ───────────────────────────────────────────
 -- Creates the storage bucket if it doesn't exist.
 -- You can also create it manually: Storage → New bucket → "bean-images" → Public.

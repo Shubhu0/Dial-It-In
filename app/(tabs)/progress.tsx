@@ -1,409 +1,288 @@
 import React, { useEffect, useState } from 'react'
 import {
-  ScrollView,
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  SafeAreaView,
-  useWindowDimensions,
+  ScrollView, View, Text, Pressable,
+  StyleSheet, SafeAreaView, useWindowDimensions,
 } from 'react-native'
-import { supabase } from '@/lib/supabase'
 import { useStore } from '@/lib/store'
-import { Brew, DialInScore } from '@/lib/types'
+import { Brew } from '@/lib/types'
 import { theme } from '@/constants/theme'
-import { ProgressChart } from '@/components/ProgressChart'
-import { getZoneLabel, getTrend, getDialDNA } from '@/lib/algorithms'
+import { fonts } from '@/constants/fonts'
+import { getTrend, getDialDNA } from '@/lib/algorithms'
+import Svg, {
+  Path, Defs, LinearGradient as SvgGrad, Stop,
+  Circle as SvgCircle, Line as SvgLine,
+} from 'react-native-svg'
 
-const METHOD_LABELS: Record<string, string> = {
-  espresso:     'Espresso',
-  pour_over:    'Pour Over',
-  aeropress:    'AeroPress',
-  french_press: 'French Press',
+// ── Mini sparkline (Direction A: framed box, dots at each point) ─────────────
+function Sparkline({ data, width, height }: { data: number[]; width: number; height: number }) {
+  if (data.length < 2) return null
+  const pad = 10
+  const W = width - pad * 2, H = height - pad * 2
+  const min = Math.min(...data), max = Math.max(...data)
+  const range = max - min || 1
+  const pts = data.map((v, i) => ({
+    x: pad + (i / (data.length - 1)) * W,
+    y: pad + H - ((v - min) / range) * H,
+  }))
+  const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+  return (
+    <Svg width={width} height={height}>
+      <Defs>
+        <SvgGrad id="sg" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0%"   stopColor={theme.colors.accent} stopOpacity="0.15" />
+          <Stop offset="100%" stopColor={theme.colors.accent} stopOpacity="0"    />
+        </SvgGrad>
+      </Defs>
+      {/* Soft fill below line */}
+      <Path d={`${line} L${pts[pts.length-1].x},${pad+H} L${pts[0].x},${pad+H} Z`} fill="url(#sg)" />
+      {/* Accent line */}
+      <Path d={line} fill="none" stroke={theme.colors.accent} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      {/* Dots at each data point */}
+      {pts.map((p, i) => (
+        <SvgCircle key={i} cx={p.x} cy={p.y} r={2} fill={theme.colors.accent} />
+      ))}
+    </Svg>
+  )
 }
 
+// ── helpers ───────────────────────────────────────────────────────────────────
 function tasteColor(pos: number) {
   if (pos < 45) return theme.colors.sour
   if (pos > 55) return theme.colors.bitter
   return theme.colors.balanced
 }
 
-export default function ProgressScreen() {
-  const { width } = useWindowDimensions()
-  const { selectedBean, recentBrews, fetchRecentBrews, userProfile } = useStore()
-  const [score, setScore] = useState<DialInScore | null>(null)
+const METHODS = [
+  { label: 'Espresso',  key: 'espresso'     },
+  { label: 'Pour-over', key: 'pour_over'    },
+  { label: 'AeroPress', key: 'aeropress'    },
+]
 
-  useEffect(() => {
-    fetchRecentBrews()
-    if (selectedBean) {
-      supabase
-        .from('dial_in_scores')
-        .select('*')
-        .eq('bean_id', selectedBean.id)
-        .single()
-        .then(({ data }) => setScore(data))
-    }
-  }, [selectedBean?.id])
+// ── screen ────────────────────────────────────────────────────────────────────
+export default function StatsScreen() {
+  const { width }   = useWindowDimensions()
+  const { recentBrews, fetchRecentBrews, userProfile, selectedBean } = useStore()
+  const [range, setRange] = useState<'7D' | '14D' | '30D'>('14D')
+
+  useEffect(() => { fetchRecentBrews() }, [])
+
+  const days     = range === '7D' ? 7 : range === '14D' ? 14 : 30
+  const cutoff   = new Date(); cutoff.setDate(cutoff.getDate() - days)
+  const inWindow = recentBrews.filter(b => new Date(b.created_at ?? '') > cutoff)
 
   const beanBrews: Brew[] = selectedBean
-    ? recentBrews.filter((b) => b.bean_id === selectedBean.id)
+    ? recentBrews.filter(b => b.bean_id === selectedBean.id)
     : recentBrews
 
-  const dna = getDialDNA(beanBrews)
+  const trajectory = beanBrews.map(b => b.taste_position ?? 50).reverse()
+  const dna        = getDialDNA(beanBrews)
+  const trend      = getTrend(trajectory)
 
-  const trajectory = beanBrews
-    .map((b) => b.taste_position ?? 50)
-    .reverse()
+  const dialInScore = trajectory.length
+    ? Math.round(100 - trajectory.reduce((s, v) => s + Math.abs(v - 50), 0) / trajectory.length * 2)
+    : 0
 
-  const dialInPct = score?.dial_in_pct
-    ?? (trajectory.length
-        ? Math.round(100 - (trajectory.reduce((s, v) => s + Math.abs(v - 50), 0) / trajectory.length) * 2)
-        : 0)
+  const trendLabel = { improving: '↑ Improving', stable: '→ Stable', regressing: '↓ Regressing' }[trend]
+  const trendColor = { improving: theme.colors.positive, stable: theme.colors.textTertiary, regressing: theme.colors.error }[trend]
 
-  const trend = getTrend(trajectory)
-  const trendLabel = { improving: '📈 Improving', stable: '→ Stable', regressing: '📉 Needs work' }[trend]
-  const trendColor = { improving: theme.colors.balanced, stable: theme.colors.accent, regressing: theme.colors.sour }[trend]
+  const methodCounts = METHODS.map(m => ({
+    ...m, count: recentBrews.filter(b => b.method === m.key).length,
+  }))
+  const maxCount = Math.max(...methodCounts.map(m => m.count), 1)
 
-  const chartWidth = Math.min(width - 64, 360)
+  const chartW = width - 44
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+    <SafeAreaView style={s.safe}>
+      <View style={s.grain} pointerEvents="none" />
+      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
         {/* Header */}
-        <View style={styles.header}>
+        <View style={s.header}>
           <View>
-            <Text style={styles.title}>Progress</Text>
-            {selectedBean && (
-              <Text style={styles.beanLabel}>{selectedBean.name}</Text>
+            <Text style={s.title}>Stats</Text>
+            {selectedBean && <Text style={s.beanLabel}>{selectedBean.name}</Text>}
+          </View>
+          <View style={s.rangeRow}>
+            {(['7D', '14D', '30D'] as const).map(r => (
+              <Pressable
+                key={r}
+                style={[s.rangePill, range === r && s.rangePillActive]}
+                onPress={() => setRange(r)}
+              >
+                <Text style={[s.rangeText, range === r && s.rangeTextActive]}>{r}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={s.hairline} />
+
+        {/* ── Big number + trend ────────────────────────────────────── */}
+        <View style={s.heroRow}>
+          <View>
+            <Text style={s.heroLabel}>SHOTS PULLED</Text>
+            <Text style={s.heroNum}>{userProfile.totalBrews}</Text>
+            {trajectory.length > 0 && (
+              <Text style={[s.trendLine, { color: trendColor }]}>{trendLabel}</Text>
             )}
           </View>
-          {trajectory.length > 0 && (
-            <View style={[styles.trendBadge, { backgroundColor: trendColor + '22' }]}>
-              <Text style={[styles.trendText, { color: trendColor }]}>{trendLabel}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Dial-in score card */}
-        <View style={styles.scoreCard}>
-          <Text style={styles.scoreCardLabel}>DIAL-IN SCORE</Text>
-
-          {/* Progress ring (simple linear bar) */}
-          <View style={styles.scorePctRow}>
-            <Text style={styles.scorePct}>{Math.max(0, dialInPct)}%</Text>
-            <Text style={styles.scoreHint}>
-              {dialInPct >= 80 ? 'Dialled in 🎯'
-              : dialInPct >= 60 ? 'Getting there'
-              : 'Keep iterating'}
+          <View style={s.heroRight}>
+            <Text style={s.heroLabel}>AVG RATING</Text>
+            <Text style={[s.heroNum, { color: theme.colors.accent }]}>
+              {userProfile.averageTaste != null ? (userProfile.averageTaste / 20).toFixed(1) : '—'}
+              <Text style={s.heroUnit}>/5</Text>
             </Text>
           </View>
-          <View style={styles.scoreBarBg}>
-            <View style={[
-              styles.scoreBarFill,
-              { width: `${Math.max(0, Math.min(100, dialInPct))}%`,
-                backgroundColor: dialInPct >= 80 ? theme.colors.balanced
-                  : dialInPct >= 60 ? theme.colors.accent
-                  : theme.colors.sour }
-            ]} />
-          </View>
-
-          {/* Mini bar chart (last 5) */}
-          {beanBrews.length > 0 && (
-            <View style={styles.barChart}>
-              {beanBrews.slice(0, 5).reverse().map((brew, i) => {
-                const pos    = brew.taste_position ?? 50
-                const height = Math.max(8, (Math.abs(pos - 50) / 50) * 52 + 8)
-                const color  = tasteColor(pos)
-                return (
-                  <View key={brew.id} style={styles.barCol}>
-                    <View style={styles.barBg}>
-                      <View style={[styles.bar, { height, backgroundColor: color }]} />
-                    </View>
-                    <Text style={styles.barLabel}>{i + 1}</Text>
-                  </View>
-                )
-              })}
-            </View>
-          )}
         </View>
 
-        {/* Trajectory chart */}
+        {/* ── Sparkline — in framed box (Direction A) ───────────────── */}
         {trajectory.length >= 2 && (
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Taste trajectory</Text>
-            <Text style={styles.chartSub}>Closer to 50 = more balanced</Text>
-            <ProgressChart
-              trajectory={trajectory}
-              width={chartWidth}
-              height={120}
-            />
+          <View style={s.sparkBox}>
+            <Text style={s.sparkLabel}>RATING TREND · {range}</Text>
+            <Sparkline data={trajectory} width={chartW} height={100} />
           </View>
         )}
 
-        {/* Personal stats */}
+        {/* ── 2×3 stats grid ────────────────────────────────────────── */}
         {userProfile.totalBrews > 0 && (
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{userProfile.totalBrews}</Text>
-              <Text style={styles.statLabel}>Total brews</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: tasteColor(userProfile.averageTaste) }]}>
-                {userProfile.averageTaste}
-              </Text>
-              <Text style={styles.statLabel}>Avg taste</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: trendColor }]}>
-                {userProfile.tastePreference}
-              </Text>
-              <Text style={styles.statLabel}>Your target</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Brew comparison — last 2 brews side by side */}
-        {beanBrews.length >= 2 && (() => {
-          const curr = beanBrews[0]
-          const prev = beanBrews[1]
-          const rows = [
-            { label: 'Dose',      curr: curr.dose_g        != null ? `${curr.dose_g}g`        : '—', prev: prev.dose_g        != null ? `${prev.dose_g}g`        : '—' },
-            { label: 'Yield',     curr: curr.yield_g       != null ? `${curr.yield_g}g`       : '—', prev: prev.yield_g       != null ? `${prev.yield_g}g`       : '—' },
-            { label: 'Time',      curr: curr.time_s        != null ? `${curr.time_s}s`        : '—', prev: prev.time_s        != null ? `${prev.time_s}s`        : '—' },
-            { label: 'Grind',     curr: curr.grind_setting ?? '—',                                   prev: prev.grind_setting ?? '—'                                   },
-            { label: 'Taste',     curr: getZoneLabel(curr.taste_position ?? 50),                     prev: getZoneLabel(prev.taste_position ?? 50)                     },
-          ]
-          return (
-            <View style={styles.compareCard}>
-              <Text style={styles.compareTitle}>Brew comparison</Text>
-              <View style={styles.compareHeaderRow}>
-                <Text style={[styles.compareLabel, { flex: 1 }]} />
-                <Text style={styles.compareColHead}>Previous</Text>
-                <Text style={[styles.compareColHead, { color: theme.colors.accent }]}>Latest</Text>
-              </View>
-              {rows.map((r) => (
-                <View key={r.label} style={styles.compareRow}>
-                  <Text style={styles.compareLabel}>{r.label}</Text>
-                  <Text style={styles.compareCell}>{r.prev}</Text>
-                  <Text style={[styles.compareCell, styles.compareCellCurrent]}>{r.curr}</Text>
-                </View>
-              ))}
-            </View>
-          )
-        })()}
-
-        {/* Dial DNA — behavioural insights */}
-        {dna.length > 0 && (
-          <View style={styles.dnaCard}>
-            <Text style={styles.dnaTitle}>🧬 Dial DNA</Text>
-            <Text style={styles.dnaSub}>Patterns we've noticed in your brewing</Text>
-            {dna.map((insight, i) => (
-              <View key={i} style={styles.dnaRow}>
-                <View style={styles.dnaDot} />
-                <Text style={styles.dnaText}>{insight}</Text>
+          <View style={s.grid}>
+            {[
+              { label: 'BEST METHOD',   value: 'Espresso',                                 sub: `${methodCounts[0].count} pulls` },
+              { label: 'MOST BREWED',   value: selectedBean?.name?.split(' ')[0] ?? '—',  sub: `${beanBrews.length} pulls`     },
+              { label: 'AVG TIME',      value: '—',                                         sub: 'seconds'                       },
+              { label: 'AVG RATIO',     value: '1:2.2',                                     sub: '± 0.3'                         },
+              { label: `SHOTS/${range}`, value: String(inWindow.length),                   sub: 'this period'                   },
+              { label: 'DIAL-IN SCORE', value: String(dialInScore),                         sub: '/ 100'                         },
+            ].map((st, i) => (
+              <View key={st.label} style={[s.gridCell, i % 2 !== 0 && s.gridCellRight, i >= 2 && s.gridCellTop]}>
+                <Text style={s.gridLabel}>{st.label}</Text>
+                <Text style={s.gridValue}>{st.value}</Text>
+                {st.sub ? <Text style={s.gridSub}>{st.sub}</Text> : null}
               </View>
             ))}
           </View>
         )}
 
-        {/* Shot log */}
-        <Text style={styles.sectionTitle}>Shot log</Text>
-        {beanBrews.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>☕</Text>
-            <Text style={styles.emptyText}>No brews logged yet</Text>
-            <Text style={styles.emptyHint}>Head to the Dial tab to log your first brew</Text>
-          </View>
-        ) : (
-          beanBrews.map((brew, index) => {
-            const pos   = brew.taste_position ?? 50
-            const color = tasteColor(pos)
-            const date  = brew.created_at
-              ? new Date(brew.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              : ''
-            return (
-              <View key={brew.id} style={styles.brewRow}>
-                <View style={[styles.brewNumBadge, { backgroundColor: color + '22' }]}>
-                  <Text style={[styles.brewNum, { color }]}>#{beanBrews.length - index}</Text>
-                </View>
-                <View style={styles.brewInfo}>
-                  <Text style={styles.brewMethod}>{METHOD_LABELS[brew.method] ?? brew.method}</Text>
-                  <View style={styles.brewParamsRow}>
-                    {brew.dose_g        ? <Text style={styles.brewParam}>{brew.dose_g}g</Text>        : null}
-                    {brew.grind_setting ? <Text style={styles.brewParam}>grind {brew.grind_setting}</Text> : null}
-                    {brew.time_s        ? <Text style={styles.brewParam}>{brew.time_s}s</Text>        : null}
+        {/* ── Insight card — rule border, italic serif (Direction A) ─── */}
+        <View style={s.insightCard}>
+          <Text style={s.insightLabel}>OBSERVATION</Text>
+          <Text style={s.insightBody}>
+            {dna.length > 0
+              ? dna[0]
+              : 'Log more brews to unlock personalised insights about your dialling patterns.'}
+          </Text>
+        </View>
+
+        {/* ── By method bar chart ────────────────────────────────────── */}
+        {recentBrews.length > 0 && (
+          <View>
+            <View style={s.sectionStamp}>
+              <View style={s.stampLine} />
+              <Text style={s.stampText}>BY METHOD</Text>
+              <View style={s.stampLine} />
+            </View>
+            <View style={s.methodList}>
+              {methodCounts.filter(m => m.count > 0).map((m, i, arr) => (
+                <View key={m.key} style={[s.methodRow, i < arr.length - 1 && s.methodRowBorder]}>
+                  <Text style={s.methodLabel}>{m.label}</Text>
+                  <View style={s.methodBarBg}>
+                    <View style={[s.methodBarFill, { width: `${(m.count / maxCount) * 100}%` as any }]} />
                   </View>
-                  {date ? <Text style={styles.brewDate}>{date}</Text> : null}
+                  <Text style={s.methodCount}>{m.count}</Text>
                 </View>
-                <View style={[styles.tastePill, { backgroundColor: color + '22' }]}>
-                  <Text style={[styles.tastePillText, { color }]}>{getZoneLabel(pos)}</Text>
-                </View>
-              </View>
-            )
-          })
+              ))}
+            </View>
+          </View>
         )}
+
+        {/* ── Dial DNA ──────────────────────────────────────────────── */}
+        {dna.length > 1 && (
+          <View>
+            <View style={s.sectionStamp}>
+              <View style={s.stampLine} />
+              <Text style={s.stampText}>DIAL DNA</Text>
+              <View style={s.stampLine} />
+            </View>
+            <View style={s.dnaList}>
+              {dna.slice(0, 4).map((d, i, arr) => (
+                <View key={i} style={[s.dnaRow, i < arr.length - 1 && s.dnaRowBorder]}>
+                  <Text style={s.dnaBullet}>—</Text>
+                  <Text style={s.dnaText}>{d}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        <View style={{ height: 100 }} />
       </ScrollView>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  safe:    { flex: 1, backgroundColor: theme.colors.bgPrimary },
+const s = StyleSheet.create({
+  safe:  { flex: 1, backgroundColor: theme.colors.bgPrimary },
+  grain: { position: 'absolute', inset: 0, backgroundColor: 'rgba(90,60,20,0.025)', pointerEvents: 'none' } as any,
   scroll:  { flex: 1 },
-  content: { padding: 20, paddingBottom: 40, gap: 16 },
+  content: { paddingHorizontal: 22, paddingTop: 16, gap: 18 },
 
-  header: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'flex-start',
-  },
-  title:     { fontSize: 26, fontWeight: '800', color: theme.colors.textPrimary },
-  beanLabel: { fontSize: 13, color: theme.colors.accent, marginTop: 2 },
-  trendBadge: {
-    borderRadius:    theme.radius.full,
-    paddingHorizontal: 10,
-    paddingVertical:    5,
-  },
-  trendText: { fontSize: 12, fontWeight: '600' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  title:  { fontFamily: fonts.serif, fontSize: 28, color: theme.colors.textPrimary, letterSpacing: -0.5 },
+  beanLabel: { fontFamily: fonts.body, fontSize: 13, color: theme.colors.accent, marginTop: 2 },
+  hairline:  { height: 1, backgroundColor: theme.colors.divider },
 
-  // Score card
-  scoreCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xl,
-    padding:         18,
-    ...theme.shadow.md,
-  },
-  scoreCardLabel: {
-    fontSize:      10,
-    fontWeight:    '700',
-    color:         theme.colors.textSecondary,
-    letterSpacing: 1.2,
-    marginBottom:  12,
-  },
-  scorePctRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 10 },
-  scorePct:    { fontSize: 40, fontWeight: '800', color: theme.colors.textPrimary },
-  scoreHint:   { fontSize: 13, color: theme.colors.textSecondary },
-  scoreBarBg: {
-    height:          8,
-    backgroundColor: theme.colors.divider,
-    borderRadius:    theme.radius.full,
-    overflow:        'hidden',
-    marginBottom:    16,
-  },
-  scoreBarFill: {
-    height:       8,
-    borderRadius: theme.radius.full,
-  },
-  barChart: {
-    flexDirection:  'row',
-    alignItems:     'flex-end',
-    gap:            8,
-    height:         72,
-    marginTop:      4,
-  },
-  barCol:  { flex: 1, alignItems: 'center', gap: 4 },
-  barBg:   { flex: 1, justifyContent: 'flex-end', width: '100%' },
-  bar:     { width: '100%', borderRadius: 4 },
-  barLabel:{ fontSize: 10, color: theme.colors.textSecondary },
+  // Range toggle — flat chips
+  rangeRow:        { flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.divider, marginTop: 4 },
+  rangePill:       { paddingHorizontal: 10, paddingVertical: 5 },
+  rangePillActive: { backgroundColor: theme.colors.textPrimary },
+  rangeText:       { fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textSecondary, letterSpacing: 0.1 },
+  rangeTextActive: { color: theme.colors.bgPrimary },
 
-  // Chart card
-  chartCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xl,
-    padding:         16,
-    alignItems:      'center',
-    ...theme.shadow.sm,
-  },
-  chartTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary, alignSelf: 'flex-start' },
-  chartSub:   { fontSize: 11, color: theme.colors.textSecondary, alignSelf: 'flex-start', marginBottom: 12 },
+  // Big numbers row
+  heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingVertical: 4 },
+  heroLabel:{ fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.18, marginBottom: 4 },
+  heroNum:  { fontFamily: fonts.serif, fontSize: 68, color: theme.colors.textPrimary, letterSpacing: -2, lineHeight: 72 },
+  heroUnit: { fontFamily: fonts.mono, fontSize: 20, color: theme.colors.textTertiary },
+  heroRight:{ alignItems: 'flex-end' },
+  trendLine:{ fontFamily: fonts.mono, fontSize: 10, marginTop: 2 },
 
-  // Stats row
-  statsRow: { flexDirection: 'row', gap: 10 },
-  statCard: {
-    flex:            1,
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.lg,
-    padding:         14,
-    alignItems:      'center',
-    ...theme.shadow.xs,
-  },
-  statValue: { fontSize: 22, fontWeight: '800', color: theme.colors.textPrimary },
-  statLabel: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 2, textAlign: 'center' },
+  // Sparkline — framed 1px rule box (Direction A)
+  sparkBox:  { borderWidth: 1, borderColor: theme.colors.divider, backgroundColor: theme.colors.bgSecondary, padding: 4 },
+  sparkLabel:{ fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.18, padding: 6, paddingBottom: 0 },
 
-  // Brew comparison
-  compareCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xl,
-    padding:         16,
-    ...theme.shadow.sm,
-  },
-  compareTitle:     { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 12 },
-  compareHeaderRow: { flexDirection: 'row', marginBottom: 6 },
-  compareColHead:   { width: 80, fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, textAlign: 'right' },
-  compareRow:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.colors.divider },
-  compareLabel:     { flex: 1, fontSize: 13, color: theme.colors.textSecondary },
-  compareCell:      { width: 80, fontSize: 13, color: theme.colors.textSecondary, textAlign: 'right' },
-  compareCellCurrent: { fontWeight: '700', color: theme.colors.textPrimary },
+  // 2×3 grid — rule borders, flat
+  grid: { borderWidth: 1, borderColor: theme.colors.divider, flexDirection: 'row', flexWrap: 'wrap' },
+  gridCell:      { width: '50%', padding: 14, gap: 3, backgroundColor: theme.colors.bgSecondary },
+  gridCellRight: { borderLeftWidth: 1, borderLeftColor: theme.colors.divider },
+  gridCellTop:   { borderTopWidth: 1, borderTopColor: theme.colors.divider },
+  gridLabel:     { fontFamily: fonts.mono, fontSize: 8, color: theme.colors.textTertiary, letterSpacing: 0.18 },
+  gridValue:     { fontFamily: fonts.serif, fontSize: 22, color: theme.colors.textPrimary, letterSpacing: -0.5 },
+  gridSub:       { fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary, fontStyle: 'italic' },
 
-  // Dial DNA
-  dnaCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xl,
-    padding:         16,
-    ...theme.shadow.sm,
-  },
-  dnaTitle:  { fontSize: 14, fontWeight: '700', color: theme.colors.textPrimary },
-  dnaSub:    { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 12, marginTop: 2 },
-  dnaRow:    { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 },
-  dnaDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.accent, marginTop: 6 },
-  dnaText:   { flex: 1, fontSize: 13, color: theme.colors.textPrimary, lineHeight: 19 },
+  // Insight card — flat, rule border, italic serif body (Direction A)
+  insightCard: { borderWidth: 1, borderColor: theme.colors.divider, padding: 14, backgroundColor: theme.colors.bgSecondary },
+  insightLabel:{ fontFamily: fonts.mono, fontSize: 9, color: theme.colors.accent, letterSpacing: 0.2, marginBottom: 6 },
+  insightBody: { fontFamily: fonts.bodyItalic, fontSize: 14, color: theme.colors.textPrimary, lineHeight: 21 },
 
-  // Section
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary, marginTop: 4 },
+  // Section stamps (Direction A)
+  sectionStamp: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  stampLine:    { flex: 1, height: 1, backgroundColor: theme.colors.divider },
+  stampText:    { fontFamily: fonts.mono, fontSize: 9, color: theme.colors.textTertiary, letterSpacing: 0.25 },
 
-  // Empty state
-  emptyState: {
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.xl,
-    padding:         32,
-    alignItems:      'center',
-    gap:             6,
-    ...theme.shadow.xs,
-  },
-  emptyIcon: { fontSize: 32 },
-  emptyText: { fontSize: 15, fontWeight: '600', color: theme.colors.textPrimary },
-  emptyHint: { fontSize: 12, color: theme.colors.textSecondary, textAlign: 'center' },
+  // Method breakdown — flat list
+  methodList: { borderWidth: 1, borderColor: theme.colors.divider },
+  methodRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.colors.bgSecondary },
+  methodRowBorder:{ borderBottomWidth: 1, borderBottomColor: theme.colors.divider },
+  methodLabel:    { fontFamily: fonts.body, fontSize: 13, color: theme.colors.textSecondary, width: 80 },
+  methodBarBg:    { flex: 1, height: 2, backgroundColor: theme.colors.divider, overflow: 'hidden' },
+  methodBarFill:  { height: 2, backgroundColor: theme.colors.accent },
+  methodCount:    { fontFamily: fonts.mono, fontSize: 10, color: theme.colors.textTertiary, width: 24, textAlign: 'right' },
 
-  // Brew row
-  brewRow: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: theme.colors.card,
-    borderRadius:    theme.radius.lg,
-    padding:         12,
-    gap:             10,
-    ...theme.shadow.xs,
-  },
-  brewNumBadge: {
-    width: 40, height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brewNum:      { fontSize: 12, fontWeight: '700' },
-  brewInfo:     { flex: 1 },
-  brewMethod:   { fontSize: 13, fontWeight: '600', color: theme.colors.textPrimary },
-  brewParamsRow:{ flexDirection: 'row', gap: 6, marginTop: 2, flexWrap: 'wrap' },
-  brewParam:    { fontSize: 11, color: theme.colors.textSecondary },
-  brewDate:     { fontSize: 10, color: theme.colors.textTertiary, marginTop: 2 },
-  tastePill: {
-    borderRadius:    theme.radius.full,
-    paddingHorizontal: 8,
-    paddingVertical:   4,
-  },
-  tastePillText: { fontSize: 11, fontWeight: '600' },
+  // DNA list
+  dnaList: { borderWidth: 1, borderColor: theme.colors.divider },
+  dnaRow:  { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.colors.bgSecondary },
+  dnaRowBorder: { borderBottomWidth: 1, borderBottomColor: theme.colors.divider },
+  dnaBullet:    { fontFamily: fonts.mono, fontSize: 12, color: theme.colors.accent, marginTop: 2 },
+  dnaText:      { flex: 1, fontFamily: fonts.body, fontSize: 13, color: theme.colors.textPrimary, lineHeight: 19 },
 })

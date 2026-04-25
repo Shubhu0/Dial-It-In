@@ -39,6 +39,7 @@ interface BrewState {
   fetchBeans:       () => Promise<void>
   setGuestMode:     (v: boolean) => void
   addBeanLocally:   (bean: Bean) => void
+  updateBeanLocally:(bean: Bean) => void
 }
 
 const DEFAULT_PARAMS: BrewParams = {
@@ -132,6 +133,9 @@ export const useStore = create<BrewState>((set, get) => ({
 
   addBeanLocally: (bean) =>
     set((s) => ({ beans: [bean, ...s.beans] })),
+
+  updateBeanLocally: (bean) =>
+    set((s) => ({ beans: s.beans.map(b => b.id === bean.id ? bean : b) })),
 
   saveBrew: async () => {
     const { selectedBean, selectedMethod, currentParams, isGuest, recentBrews } = get()

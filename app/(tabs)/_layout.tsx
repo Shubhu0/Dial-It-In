@@ -1,73 +1,91 @@
 import { Tabs } from 'expo-router'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Home, Gauge, TrendingUp } from 'lucide-react-native'
+import { Home, BookOpen, Coffee, BarChart2, User } from 'lucide-react-native'
 import { theme } from '@/constants/theme'
+import { fonts } from '@/constants/fonts'
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets()
   return (
     <Tabs
-      tabBar={(props) => <CustomTabBar {...props} insets={insets} />}
+      tabBar={(props) => <FieldbookTabBar {...props} insets={insets} />}
       screenOptions={{ headerShown: false }}
-    />
+    >
+      <Tabs.Screen name="index"    options={{ title: 'Home'  }} />
+      <Tabs.Screen name="log"      options={{ title: 'Log'   }} />
+      <Tabs.Screen name="beans"    options={{ title: 'Beans' }} />
+      <Tabs.Screen name="progress" options={{ title: 'Stats' }} />
+      <Tabs.Screen name="profile"  options={{ title: 'You'   }} />
+      <Tabs.Screen name="dial"     options={{ href: null }}    />
+    </Tabs>
   )
 }
 
-const LABELS: Record<string, string> = {
-  index:    'Home',
-  dial:     'Dial',
-  progress: 'Progress',
-}
+const TABS = [
+  { name: 'index',    label: 'HOME',  Icon: Home      },
+  { name: 'log',      label: 'LOG',   Icon: BookOpen  },
+  { name: 'beans',    label: 'BEANS', Icon: Coffee    },
+  { name: 'progress', label: 'STATS', Icon: BarChart2 },
+  { name: 'profile',  label: 'YOU',   Icon: User      },
+]
 
-function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const color = focused ? theme.colors.accent : theme.colors.textSecondary
-  const size  = 22
-  if (name === 'index')    return <Home       size={size} stroke={color} />
-  if (name === 'dial')     return <Gauge      size={size} stroke={color} />
-  if (name === 'progress') return <TrendingUp size={size} stroke={color} />
-  return null
-}
+const HIDDEN_ROUTES = new Set(['dial'])
 
-function CustomTabBar({ state, navigation, insets }: any) {
+// Direction A: flat bottom tab bar — paper-2 bg, hairline top border,
+// icon + mono caps label, active = accent tint
+function FieldbookTabBar({ state, navigation, insets }: any) {
+  const activeRoute = state.routes[state.index]?.name
+  if (HIDDEN_ROUTES.has(activeRoute)) return null
+
   return (
-    <View style={[styles.bar, { paddingBottom: insets.bottom + 4 }]}>
-      {state.routes.map((route: any, index: number) => {
-        const focused = state.index === index
-        return (
-          <Pressable
-            key={route.key}
-            style={styles.tab}
-            onPress={() => navigation.navigate(route.name)}
-          >
-            <TabIcon name={route.name} focused={focused} />
-            <Text style={[styles.label, focused && styles.labelActive]}>
-              {LABELS[route.name]}
-            </Text>
-          </Pressable>
-        )
-      })}
+    <View style={[s.bar, { paddingBottom: insets.bottom || 8 }]}>
+      {state.routes
+        .filter((r: any) => TABS.some(t => t.name === r.name))
+        .map((route: any) => {
+          const tabIdx  = state.routes.indexOf(route)
+          const focused = state.index === tabIdx
+          const tab     = TABS.find(t => t.name === route.name)!
+          const { Icon, label } = tab
+          const color   = focused ? theme.colors.accent : theme.colors.textTertiary
+
+          return (
+            <Pressable
+              key={route.key}
+              style={s.tab}
+              onPress={() => navigation.navigate(route.name)}
+              hitSlop={4}
+            >
+              <Icon size={18} stroke={color} strokeWidth={focused ? 2 : 1.6} />
+              <Text style={[s.label, { color }]}>{label}</Text>
+            </Pressable>
+          )
+        })}
     </View>
   )
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
+  // Direction A: flat, paper-2 background, hairline top border
   bar: {
-    flexDirection:        'row',
-    backgroundColor:      '#FDF6ED',
-    borderTopWidth:       1,
-    borderTopColor:       theme.colors.divider,
-    borderTopLeftRadius:  20,
-    borderTopRightRadius: 20,
-    paddingTop:           12,
-    paddingHorizontal:    20,
-    shadowColor:          '#3A2E2A',
-    shadowOffset:         { width: 0, height: -2 },
-    shadowOpacity:        0.06,
-    shadowRadius:         8,
-    elevation:            8,
+    flexDirection:   'row',
+    backgroundColor: theme.colors.bgSecondary,   // paper-2 = #EBE0C8
+    borderTopWidth:  1,
+    borderTopColor:  theme.colors.divider,        // rule = #D9CCAE
+    paddingTop:      10,
   },
-  tab:         { flex: 1, alignItems: 'center', gap: 3 },
-  label:       { fontSize: 10, color: theme.colors.textSecondary },
-  labelActive: { color: theme.colors.accent, fontWeight: '600' },
+  tab: {
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
+    gap:            3,
+    paddingVertical: 2,
+  },
+  // Mono caps label — Direction A style
+  label: {
+    fontFamily:    fonts.mono,
+    fontSize:      9,
+    fontWeight:    '600',
+    letterSpacing: 0.08,
+  },
 })

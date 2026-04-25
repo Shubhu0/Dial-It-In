@@ -5,9 +5,11 @@ const AI_API_URL = 'https://api.anthropic.com/v1/messages'
 const AI_MODEL   = 'claude-haiku-4-5-20251001'   // fast + cheap for suggestions
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Origin':  'https://dial-it-in-kappa.vercel.app',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+
+const RATE_LIMIT_SECONDS = 30
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   espresso: `
@@ -151,7 +153,22 @@ serve(async (req) => {
     })
   }
 
-  // ── 2. Parse and validate the request body ─────────────────────────────────
+  // ── 2. Rate limit: one suggestion per RATE_LIMIT_SECONDS per user ──────────
+  const cutoff = new Date(Date.now() - RATE_LIMIT_SECONDS * 1000).toISOString()
+  const { data: rateRow } = await supabase
+    .from('suggestion_rate_limits')
+    .select('last_at')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (rateRow && rateRow.last_at > cutoff) {
+    return new Response(JSON.stringify({ error: 'Too many requests. Please wait before requesting another suggestion.' }), {
+      status:  429,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Retry-After': String(RATE_LIMIT_SECONDS) },
+    })
+  }
+
+  // ── 3. Parse and validate the request body ─────────────────────────────────
   let body: unknown
   try {
     body = await req.json()
@@ -170,7 +187,12 @@ serve(async (req) => {
     })
   }
 
-  // ── 3. Call the AI ─────────────────────────────────────────────────────────
+  // ── 4. Stamp the rate limit row (upsert) before calling AI ────────────────
+  await supabase
+    .from('suggestion_rate_limits')
+    .upsert({ user_id: user.id, last_at: new Date().toISOString() })
+
+  // ── 5. Call the AI ─────────────────────────────────────────────────────────
   try {
     const { method, params, history, bean } = body as Record<string, unknown>
 
