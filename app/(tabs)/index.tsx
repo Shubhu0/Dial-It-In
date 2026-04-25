@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Search, X, ChevronRight, Plus } from 'lucide-react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/lib/store'
 import { theme } from '@/constants/theme'
@@ -51,7 +52,7 @@ export default function HomeScreen() {
 
   const [searchOpen,  setSearchOpen]  = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [userName,    setUserName]    = useState('Maya')
+  const [userName,    setUserName]    = useState('')
 
   useEffect(() => {
     fetchRecentBrews(); fetchBeans()
@@ -60,9 +61,16 @@ export default function HomeScreen() {
         if (user) {
           const raw = user.user_metadata?.full_name
             || user.user_metadata?.name
-            || user.email?.split('@')[0]
-            || 'there'
-          setUserName(raw.charAt(0).toUpperCase() + raw.slice(1))
+            || user.email?.split('@')[0]?.replace(/[._-]/g, ' ')
+            || ''
+          if (raw) setUserName(raw.charAt(0).toUpperCase() + raw.slice(1))
+        }
+      })
+    } else {
+      // Load guest display name from AsyncStorage
+      AsyncStorage.getItem('user_preferences_v1').then(saved => {
+        if (saved) {
+          try { const p = JSON.parse(saved); if (p.displayName) setUserName(p.displayName) } catch {}
         }
       })
     }
@@ -114,9 +122,11 @@ export default function HomeScreen() {
               <Text style={s.greeting}>
                 {'Good ' + greetingWord() + ','}
               </Text>
-              <Text style={s.greetingName}>
-                <Text style={s.greetingItalic}>{userName}.</Text>
-              </Text>
+              {userName ? (
+                <Text style={s.greetingName}>
+                  <Text style={s.greetingItalic}>{userName}.</Text>
+                </Text>
+              ) : null}
             </View>
             <Pressable onPress={() => setSearchOpen(true)} hitSlop={8}>
               <Search size={18} stroke={theme.colors.textTertiary} strokeWidth={1.6} />

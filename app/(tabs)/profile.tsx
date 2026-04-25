@@ -120,9 +120,10 @@ export default function ProfileScreen() {
   const { recentBrews, beans, userProfile, isGuest, setGuestMode } = useStore()
   const { appTheme, setAppTheme, colors } = useAppTheme()
 
-  const [prefs,     setPrefs]     = useState<UserPrefs>(DEFAULT_PREFS)
-  const [userName,  setUserName]  = useState('Maya Osei')
-  const [userEmail, setUserEmail] = useState('')
+  const [prefs,        setPrefs]        = useState<UserPrefs>(DEFAULT_PREFS)
+  const [userName,     setUserName]     = useState('')
+  const [userEmail,    setUserEmail]    = useState('')
+  const [editingName,  setEditingName]  = useState(false)
 
   // Modal state
   const [editingField, setEditingField] = useState<{ key: keyof UserPrefs; label: string; placeholder: string } | null>(null)
@@ -167,19 +168,40 @@ export default function ProfileScreen() {
   useEffect(() => {
     AsyncStorage.getItem(PREFS_KEY).then(raw => {
       if (raw) {
-        try { setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(raw) }) } catch {}
+        try {
+          const parsed = JSON.parse(raw)
+          setPrefs({ ...DEFAULT_PREFS, ...parsed })
+          // Guest name stored in prefs
+          if (isGuest && parsed.displayName) setUserName(parsed.displayName)
+        } catch {}
       }
     })
     if (!isGuest) {
       supabase.auth.getUser().then(({ data: { user } }) => {
         if (user) {
           const name = user.user_metadata?.full_name || user.user_metadata?.name || ''
-          if (name) setUserName(name)
+          // Fall back to capitalised email prefix when no display name is set
+          const fallback = user.email
+            ? user.email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+            : ''
+          setUserName(name || fallback)
           setUserEmail(user.email ?? '')
         }
       })
     }
   }, [isGuest])
+
+  async function handleSaveName(newName: string) {
+    const trimmed = newName.trim()
+    if (!trimmed) return
+    setUserName(trimmed)
+    if (isGuest) {
+      const updated = { ...prefs, displayName: trimmed } as any
+      await AsyncStorage.setItem(PREFS_KEY, JSON.stringify(updated))
+    } else {
+      await supabase.auth.updateUser({ data: { full_name: trimmed } })
+    }
+  }
 
   const savePrefs = useCallback(async (updated: UserPrefs) => {
     setPrefs(updated)
@@ -275,15 +297,21 @@ export default function ProfileScreen() {
         {/* Title */}
         <Text style={d.title}>You</Text>
 
-        {/* Avatar card */}
-        <View style={d.avatarCard}>
+        {/* Avatar card — tap to edit name */}
+        <Pressable style={d.avatarCard} onPress={() => setEditingName(true)}>
           <View style={d.avatar}>
             <Text style={d.avatarInitial}>
-              {userName.charAt(0).toUpperCase()}
+              {userName ? userName.charAt(0).toUpperCase() : '?'}
             </Text>
           </View>
           <View style={{ flex: 1, gap: 2 }}>
-            <Text style={d.avatarName}>{userName}</Text>
+            {userName ? (
+              <Text style={d.avatarName}>{userName}</Text>
+            ) : (
+              <Text style={[d.avatarName, { color: colors.textTertiary }]}>
+                Tap to set your name
+              </Text>
+            )}
             <Text style={d.avatarSub}>
               {isGuest
                 ? 'Guest mode · data stored locally'
@@ -291,7 +319,8 @@ export default function ProfileScreen() {
             </Text>
             {userEmail ? <Text style={d.avatarEmail}>{userEmail}</Text> : null}
           </View>
-        </View>
+          <ChevronRight size={14} stroke={colors.textTertiary} strokeWidth={1.8} />
+        </Pressable>
 
         {/* ── Your kit ─────────────────────────────────────────────── */}
         <View>
@@ -393,6 +422,16 @@ export default function ProfileScreen() {
 
         <View style={{ height: 120 }} />
       </ScrollView>
+
+      {/* ── Name edit modal ─────────────────────────────────────── */}
+      <EditModal
+        visible={editingName}
+        label="your name"
+        value={userName}
+        placeholder="e.g. Alex Nguyen"
+        onSave={handleSaveName}
+        onClose={() => setEditingName(false)}
+      />
 
       {/* ── Edit text modal (kit items) ──────────────────────────── */}
       {editingField && (
